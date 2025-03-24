@@ -3,41 +3,115 @@
 #
 
 import numpy as np
+from surfdisp_utils import dltar, nevill, sphere, gtsolh
 
 
-# Placeholder function for 'sphere' transformation:
-def sphere(ifunc, flag, d, a, b, rho, mmax, llw):
+def getsol(
+        t1,
+        c1_init,
+        clow,
+        dc,
+        cm,
+        betmx,
+        ifunc,
+        ifirst,
+        d,
+        a,
+        b,
+        rho,
+        rtp,
+        dtp,
+        btp,
+        mmax,
+        llw,
+        del1st=None
+):
     """
-    Placeholder for Earth-flattening transformation (spherical earth correction).
+    Bracket and refine the solution for a phase velocity c
+    such that the dispersion equation Delta(c) = 0.
 
-    Parameters:
-    ----------
-    ifunc : int
-        Function type indicator.
-    flag : int
-        Control flag (0 or 1) indicating preparation or execution.
-    d, a, b, rho : ndarray
-        Model layer properties (thickness, velocities, densities).
-    mmax : int
-        Number of layers.
-    llw : int
-        Water-layer indicator (1 no water, 2 water at surface).
+    Args:
+        t1 (float): Period (s).
+        c1_init (float): Initial guess for phase velocity.
+        clow (float): Minimum velocity allowed during search.
+        dc (float): Velocity increment during bracketing.
+        cm (float): Minimum physically acceptable velocity.
+        betmx (float): Maximum shear wave velocity.
+        ifunc (int): 1=Love wave, 2=Rayleigh wave.
+        ifirst (bool): True if this is the first period of the mode.
+        d, a, b, rho, rtp, dtp, btp (np.ndarray): Layer model.
+        mmax (int): Number of layers.
+        llw (int): Water layer flag (1 or 2).
+        del1st (float or None): Sign of initial determinant value.
 
-    Notes:
-    ------
-    Detailed implementation of this routine depends on Biswas (1972) method or similar.
+    Returns:
+        tuple: (iret, c1, del1st)
+            iret (int): 1 if success, -1 if failure.
+            c1 (float): Refined root.
+            del1st (float): Updated del1st value (for mode tracking).
     """
-    pass  # To be implemented
-# end sphere
+    twopi = 2.0 * np.pi
+    omega = twopi / t1
+    c1 = c1_init
+    wvno = omega / c1
 
+    # Initial value of the dispersion function
+    del1 = dltar(wvno, omega, ifunc, d, a, b, rho, rtp, dtp, btp, mmax, llw, twopi)
 
-def gtsolh():
-    pass
-# end getsol
+    # Save initial sign if needed
+    if ifirst:
+        del1st = del1
+    # end if
 
+    # Determine search direction
+    sign_check = np.sign(del1st) * np.sign(del1)
+    if ifirst or sign_check >= 0.0:
+        idir = +1
+    else:
+        idir = -1
+    # end if
 
-def getsol(t1, c1, clow, dc, cm, betmx, ifunc, ifirst, d, a, b):
-    return 0, 0
+    # Bracketing loop
+    while True:
+        c2 = c1 + dc if idir > 0 else c1 - dc
+
+        # Check if we're going below allowed threshold
+        if c2 <= clow:
+            idir = +1
+            c1 = clow
+            c2 = c1 + dc
+            if c2 <= clow:
+                return -1, c1, del1st  # failure
+            # end if
+        # end if
+
+        # Compute dispersion value at new point
+        wvno = omega / c2
+        del2 = dltar(wvno, omega, ifunc, d, a, b, rho, rtp, dtp, btp, mmax, llw, twopi)
+
+        # Check for sign change (zero crossing)
+        if np.sign(del1) != np.sign(del2):
+            break  # root is bracketed
+        # end if
+
+        c1 = c2
+        del1 = del2
+
+        # Safety check: out of physical domain
+        if c1 < cm or c1 >= betmx + dc:
+            return -1, c1, del1st
+        # end if
+    # end while
+
+    # Refine root using interpolation (Neville or other method)
+    cn = nevill(t1, c1, c2, del1, del2, ifunc, d, a, b, rho, rtp, dtp, btp, mmax, llw, twopi)
+    c1 = cn
+
+    if c1 > betmx:
+        return -1, c1, del1st
+    # end if
+
+    return 1, c1, del1st
 # end getsol
 
 
@@ -79,10 +153,17 @@ def surfdisp2k25(
     err = 0.0
     cg = np.zeros(kmax)
 
+    # Earth model type
     nsph = iflsph
+
+    # Maximum number of layers
     mmax = nlayer
 
     # Copy input model
+    # Layer ticknesses,
+    # P-wave velocities,
+    # S-wave velocities,
+    # Layer densities
     b = np.array(vsm)
     a = np.array(vpm)
     d = np.array(thkm)
@@ -97,17 +178,36 @@ def surfdisp2k25(
         raise ValueError("Invalid iwave (must be 1 or 2)")
     # end if
 
-    # Constants
+    # A multiplier used to adjust the root search when looking for a new mode.
+    # A security margin to avoid that two modes are too close.
     sone0 = 1.5
-    ddc0 = 0.005
-    h0 = 0.005
-    one = 1.0e-2
     onea = sone0
 
+    # Increment phase to scan phase velocity
+    ddc0 = 0.005
+
+    # Relative perturbation
+    h0 = 0.005
+
+    # A small correction factor, often used as a relative offset margin in calculations.
+    one = 1.0e-2
+
+    # Water layer indicator (on surface)
+    # b[0] <= 0: water layer
+    # b[0] > 0: solid layer
     llw = 1 if b[0] > 0 else 2
 
+    # Earth model type
     if nsph == 1:
-        sphere(0, 0, d, a, b, rho, mmax, llw)
+        d, a, b, rho, sphere_aux = sphere(
+            ifunc=0,
+            iflag=0,
+            d=d,
+            a=a,
+            b=b,
+            rho=rho,
+            mmax=mmax
+        )
     # end if
 
     # Extremal velocities
@@ -201,7 +301,7 @@ def surfdisp2k25(
                 # end if
 
                 # Root finding (phase velocity)
-                iret, c1 = getsol(t1, c1, clow, dc, cm, betmx, ifunc, ifirst, d, a, b)
+                iret, c1, _ = getsol(t1, c1, clow, dc, cm, betmx, ifunc, ifirst, d, a, b)
                 if iret == -1:
                     ift = k
                     err = 1.0
@@ -214,7 +314,7 @@ def surfdisp2k25(
                 if igr > 0:
                     ifirst = False
                     clow, c2 = cb[k] + one*dc, c1 - onea*dc
-                    iret, c2 = getsol(t1b, c2, clow, dc, cm, betmx, ifunc, ifirst, d, a, b)
+                    iret, c2, _ = getsol(t1b, c2, clow, dc, cm, betmx, ifunc, ifirst, d, a, b)
                     if iret == -1:
                         c2 = c[k]
                     cb[k] = c2
