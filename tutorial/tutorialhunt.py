@@ -77,7 +77,7 @@ truemodel = {'model': (pdep, pvs),
              'explike': explike,
              }
 
-print truenoise, explike
+print(truenoise, explike)
 
 
 #

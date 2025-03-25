@@ -15,21 +15,29 @@ except ImportError:
 extensions = [
     NumpyExtension(
         name='BayHunter.surfdisp96_ext',
-        sources=['src/extensions/surfdisp96.f'],
+        sources=['BayHunter/extensions/surfdisp96.f'],
         extra_f77_compile_args='-O3 -ffixed-line-length-none -fbounds-check -m64'.split(),  # noqa
         f2py_options=['only:', 'surfdisp96', ':'],
-        language='f77'),
-    ]
+        language='f77'
+    ),
+    NumpyExtension(
+        name='BayHunter.sphere_ext',
+        sources=['BayHunter/extensions/sphere96.f'],
+        extra_f77_compile_args='-O3 -ffixed-line-length-none -fbounds-check -m64'.split(),  # noqa
+        f2py_options=['only:', 'sphere', ':'],
+        language='f77'
+    )
+]
 
 extensions.extend(cythonize(
     Extension("BayHunter.rfmini", [
-        "src/extensions/rfmini/rfmini.pyx",
-        "src/extensions/rfmini/greens.cpp",
-        "src/extensions/rfmini/model.cpp",
-        "src/extensions/rfmini/pd.cpp",
-        "src/extensions/rfmini/synrf.cpp",
-        "src/extensions/rfmini/wrap.cpp",
-        "src/extensions/rfmini/fork.cpp"],
+        "BayHunter/extensions/rfmini/rfmini.pyx",
+        "BayHunter/extensions/rfmini/greens.cpp",
+        "BayHunter/extensions/rfmini/model.cpp",
+        "BayHunter/extensions/rfmini/pd.cpp",
+        "BayHunter/extensions/rfmini/synrf.cpp",
+        "BayHunter/extensions/rfmini/wrap.cpp",
+        "BayHunter/extensions/rfmini/fork.cpp"],
         include_dirs=[numpy.get_include()])))
 
 
@@ -43,9 +51,9 @@ setup(
     url="https://github.com/jenndrei/BayHunter",
     packages=['BayHunter'],
     package_dir={
-        'BayHunter': 'src'},
+        'BayHunter': 'BayHunter'},
 
-    scripts=['src/scripts/baywatch'],
+    scripts=['BayHunter/scripts/baywatch'],
 
     package_data={
         'BayHunter': ['defaults/*'], },
