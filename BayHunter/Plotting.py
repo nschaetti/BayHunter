@@ -326,9 +326,9 @@ class PlotFromStorage(object):
         n = 0
         for i, file in enumerate(files):
             phase = int(op.basename(file).split('_p')[1][0])
-            alpha = (0.4 if phase is 1 else 0.7)
-            ls = ('-' if phase is 1 else '-')
-            lw = (0.5 if phase is 1 else 0.8)
+            alpha = (0.4 if phase == 1 else 0.7)
+            ls = ('-' if phase == 1 else '-')
+            lw = (0.5 if phase == 1 else 0.8)
             chainidx, _, _ = self._return_c_p_t(file)
             color = color_list[n]
 
@@ -338,13 +338,13 @@ class PlotFromStorage(object):
             if misfit or noise:
                 data = data.T[ind]
 
-            iters = (np.linspace(xmin, 0, data.size) if phase is 1 else
+            iters = (np.linspace(xmin, 0, data.size) if phase == 1 else
                      np.linspace(0, xmax, data.size))
             label = 'c%d' % (chainidx)
 
             ax.plot(iters, data, color=color,
                     ls=ls, lw=lw, alpha=alpha,
-                    label=label if phase is 2 else '')
+                    label=label if phase == 2 else '')
 
             if phase == 2:
                 if n == 0:
@@ -479,9 +479,9 @@ class PlotFromStorage(object):
 
         # get interfaces, #first
         models2 = ModelMatrix._replace_zvnoi_h(models)
-        models2 = np.array([model[~np.isnan(model)] for model in models2])
-        yinterf = np.array([np.cumsum(model[int(model.size/2):-1])
-                            for model in models2])
+        models2 = [model[~np.isnan(model)] for model in models2]
+        print(f"Model size: {[np.cumsum(model[int(model.size/2):-1]) for model in models2]}")
+        yinterf = [np.cumsum(model[int(model.size/2):-1]) for model in models2]
         yinterf = np.concatenate(yinterf)
 
         vss_int, deps_int = ModelMatrix.get_interpmodels(models, dep_int)
@@ -605,11 +605,10 @@ class PlotFromStorage(object):
 
     @tryexcept
     def plot_posterior_nlayers(self, final=True, chainidx=0):
-
         models, = self._get_posterior_data(['models'], final, chainidx)
 
         # get interfaces
-        models = np.array([model[~np.isnan(model)] for model in models])
+        models = [model[~np.isnan(model)] for model in models]
         layers = np.array([(model.size/2 - 1) for model in models])
 
         bins = np.arange(np.min(layers), np.max(layers)+2)-0.5

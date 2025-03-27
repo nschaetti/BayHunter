@@ -118,7 +118,6 @@ class SingleChain(object):
 
         z_vnoi.sort()
         model = np.concatenate((vs, z_vnoi))
-
         return(model if self._validmodel(model)
                else self.draw_initmodel())
 
@@ -134,7 +133,7 @@ class SingleChain(object):
                 idx = (2*i)+j
                 noiseprior = self.priors[target.noiseref + noiseref]
 
-                if type(noiseprior) in [int, float, np.float64]:
+                if type(noiseprior) in [int, float, np.floating]:
                     corrfix[idx] = True
                     init_noise[idx] = noiseprior
                 else:
@@ -150,7 +149,7 @@ class SingleChain(object):
         return init_noise, corrfix
 
     def draw_initvpvs(self):
-        if type(self.priors['vpvs']) == np.float:
+        if type(self.priors['vpvs']) == float:
             return self.priors['vpvs']
 
         vpvsmin, vpvsmax = self.priors['vpvs']
@@ -262,7 +261,6 @@ exponential law. Explicitly state a noise reference for your user target \
 
         z_new = np.concatenate((z_vnoi, [z_birth]))
         vs_new = np.concatenate((vs_vnoi, [vs_birth]))
-
         self.dvs2 = np.square(vs_birth - vs_before)
         return np.concatenate((vs_new, z_new))
 
@@ -595,7 +593,7 @@ exponential law. Explicitly state a noise reference for your user target \
 
         self.modelmods = ['vsmod', 'zvmod', 'birth', 'death']
         self.noisemods = [] if len(self.noiseinds) == 0 else ['noise']
-        self.vpvsmods = [] if type(self.priors['vpvs']) == np.float else ['vpvs']
+        self.vpvsmods = [] if type(self.priors['vpvs']) == np.floating else ['vpvs']
         self.modifications = self.modelmods + self.noisemods + self.vpvsmods
 
         self.accepted = np.zeros(len(self.propdist))
