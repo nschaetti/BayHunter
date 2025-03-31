@@ -587,20 +587,26 @@ exponential law. Explicitly state a noise reference for your user target \
         self.iiter += 1
 
     def run_chain(self):
+        """
+        Run the MCMC process for a single chain.
+        """
+        # Time before inversion
         t0 = time.time()
         self.tnull = time.time()
         self.iiter = -self.iter_phase1
 
+        # Modifications
         self.modelmods = ['vsmod', 'zvmod', 'birth', 'death']
         self.noisemods = [] if len(self.noiseinds) == 0 else ['noise']
         self.vpvsmods = [] if type(self.priors['vpvs']) == np.floating else ['vpvs']
         self.modifications = self.modelmods + self.noisemods + self.vpvsmods
-
         self.accepted = np.zeros(len(self.propdist))
         self.proposed = np.zeros(len(self.propdist))
 
+        # Burnin phase
         while self.iiter < self.iter_phase2:
             self.iterate()
+        # end while
 
         runtime = (time.time() - t0)
 

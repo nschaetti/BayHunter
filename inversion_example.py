@@ -30,7 +30,13 @@ try:
     ysw = _ysw + SynthObs.compute_expnoise(_ysw, corr=0, sigma=0.012)
     yrf = _yrf + SynthObs.compute_gaussnoise(_yrf, corr=0.98, sigma=0.005)
 
+    # Title: Inversion of Rayleigh Dispersion Phase and Receiver Function
     print("[bold cyan]Initializing targets...[/bold cyan]")
+    print(f"[yellow]RayleighDispersionPhase: xsw:{xsw.size}, ysw:{ysw.size} points[/]")
+
+    # Example xsw and ysw are 21 points each.
+    # xsw: [1, 3, ...] are periods in seconds.
+    # ysw: [0.1, 0.2, ...] are phase velocities in km/s.
     target1 = Targets.RayleighDispersionPhase(xsw, ysw)
     target2 = Targets.PReceiverFunction(xrf, yrf)
     target2.moddata.plugin.set_modelparams(gauss=1.0, water=0.01, p=6.4)
@@ -39,11 +45,14 @@ try:
 
     print("[bold cyan]Loading parameters from config.ini...[/bold cyan]")
     priors, initparams = utils.load_params('tutorial/config.ini')
+    print(f"[yellow]Priors: {priors}[/]")
+    print(f"[yellow]Initparams: {initparams}[/]")
 
     print("[bold cyan]Saving config file for BayWatch...[/bold cyan]")
     utils.save_baywatch_config(targets, priors=priors, initparams=initparams)
 
     print("[bold cyan]Starting MCMC inversion...[/bold cyan]")
+    print(f"[yellow]Seed: {seed}[/]")
     optimizer = MCMC_Optimizer(targets, initparams=initparams, priors=priors, random_seed=seed)
     optimizer.mp_inversion(nthreads=8, baywatch=True, dtsend=1)
 

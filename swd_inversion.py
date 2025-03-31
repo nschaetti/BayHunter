@@ -29,27 +29,12 @@ def main():
     # Join the targets
     targets = Targets.JointTarget(targets=[target_swd])
 
-    print("[bold cyan]Defining prior and init parameters...[/bold cyan]")
-    priors = {
-        'vpvs': (1.4, 2.1),
-        'layers': (1, 20),
-        'vs': (2, 5),
-        'swdnoise_corr': 0.0,
-        'swdnoise_std': (1e-5, 0.05)
-    }
+    print("[bold cyan]Loading parameters from config.ini...[/bold cyan]")
+    priors, initparams = utils.load_params('tutorial/config.ini')
+    initparams['savepath'] = 'swd_results'
 
-    initparams = {
-        'nchains': 5,
-        'iter_burnin': (2048 * 16),
-        'iter_main': (2048 * 8),
-        'propdist': (0.015, 0.015, 0.015, 0.005, 0.005),
-        'acceptance': (40, 45),
-        'thickmin': 0.1,
-        'rcond': 1e-5,
-        'station': 'migrate_synth',
-        'savepath': 'results',
-        'maxmodels': 50000
-    }
+    print(f"[yellow]Priors: {priors}[/]")
+    print(f"[yellow]Initparams: {initparams}[/]")
 
     print("[bold cyan]Saving config for BayWatch...[/bold cyan]")
     utils.save_baywatch_config(
@@ -58,7 +43,7 @@ def main():
         initparams=initparams
     )
 
-    print("[bold green]Starting MCMC inversion...[/bold green]")
+    # MCMC inversion using the MCMC_Optimizer class
     optimizer = MCMC_Optimizer(
         targets=targets,
         initparams=initparams,
@@ -66,6 +51,7 @@ def main():
         random_seed=None
     )
 
+    print("[bold green]Starting MCMC inversion...[/bold green]")
     optimizer.mp_inversion(
         nthreads=8,
         baywatch=True,
@@ -78,10 +64,13 @@ def main():
     configfile = op.join(path, 'data', cfile)
     obj = PlotFromStorage(configfile=configfile)
 
-    obj.save_final_distribution(maxmodels=100000, dev=0.05)
-    obj.save_plots()
-    obj.merge_pdfs()
-
+    # print("[bold cyan]Saving posterior distributions and plots...[/bold cyan]")
+    # obj.save_final_distribution(maxmodels=100000, dev=0.05)
+    # obj.save_plots()
+    # obj.merge_pdfs()
+    models = obj.get_models(['models'], final=True)
+    print(models.shape)
+    print(models[0])
     print("[bold green]✅ Done! Results saved in:[/bold green]", path)
 # end main
 

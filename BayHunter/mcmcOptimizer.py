@@ -33,27 +33,41 @@ class MCMC_Optimizer(object):
     Contains multiple chains - parallel computing.
     Check output files/ folder of forward modeling to not cause errors
     """
-    def __init__(self, targets, initparams=dict(), priors=dict(),
-                 random_seed=None):
+
+    def __init__(
+            self,
+            targets,
+            initparams=dict(),
+            priors=dict(),
+            random_seed=None
+    ):
+        # Set up the ZeroMQ socket address for BayWatch live communication
         self.sock_addr = 'tcp://*:5556'
+
+        # Initialize a local random number generator for reproducibility
         self.rstate = np.random.RandomState(random_seed)
 
+        # Load default prior and inversion parameters from config file
         defaults = utils.get_path('defaults.ini')
         self.priors, self.initparams = utils.load_params(defaults)
+
+        # Overwrite defaults with user-provided parameters
         self.priors.update(priors)
         self.initparams.update(initparams)
 
+        # Get station name and create output directory if it doesn't exist
         self.station = self.initparams.get('station')
-
         savepath = op.join(self.initparams['savepath'], 'data')
         if not op.exists(savepath):
             os.makedirs(savepath)
 
+        # Save configuration (targets, priors, params) for later use in plotting
         # save file for offline-plotting
         outfile = op.join(savepath, '%s_config.pkl' % self.station)
         utils.save_config(targets, outfile, priors=self.priors,
                           initparams=self.initparams)
 
+        # Extract core MCMC parameters
         self.nchains = self.initparams.get('nchains')
         self.ntargets = len(targets.targets)
 
@@ -61,18 +75,21 @@ class MCMC_Optimizer(object):
         self.iter_phase2 = int(self.initparams['iter_main'])
         self.iterations = self.iter_phase1 + self.iter_phase2
 
+        # Maximum number of Voronoi layers (excluding halfspace)
         self.maxlayers = int(self.priors['layers'][1]) + 1
         # self.vpvs = self.priors['vpvs']
 
+        # Initialize shared memory structures for chains and results
         # shared data and chains
         self._init_shareddata()
 
+        # Create all chains with their initial models and assigned targets
         logger.info('> %d chain(s) are initiated ...' % self.nchains)
-
         self.chains = []
         for i in np.arange(self.nchains):
             self.chains += [self._init_chain(chainidx=i, targets=targets)]
 
+        # Create a multiprocessing manager for inter-process communication
         self.manager = mp.Manager()
 
     def _init_shareddata(self):
@@ -200,57 +217,91 @@ class MCMC_Optimizer(object):
             time.sleep(dtsend)
 
     def mp_inversion(self, baywatch=False, dtsend=0.5, nthreads=0):
-        """Multiprocessing inversion."""
+        """
+        Launches the MCMC inversion using multiprocessing.
+        Each chain runs in its own process, optionally monitored by BayWatch.
+        Chains are executed in parallel, up to `nthreads` at a time.
+
+        Args:
+            baywatch (bool): Enable live monitoring of inversion progress.
+            dtsend (float): Time interval for sending data to BayWatch.
+            nthreads (int): Number of parallel chains to run simultaneously.
+
+        Returns:
+            None
+        """
 
         def idxsort(chain):
+            # Sorting function used to reorder chains after completion
             return chain.chainidx
+        # end idxsort
 
         def gochain(chainidx):
+            # Function to run a single MCMC chain in a subprocess
             chain = self.chains[chainidx]
             chain.run_chain()
 
+            # Prevent pickle issues with callable attributes
             # reset to None, otherwise pickling error
             for target in chain.targets.targets:
                 target.get_covariance = None
+            # end for
 
+            # Store the completed chain in the shared manager list
             self.chainlist.append(chain)
+        # end gochain
 
+        # Determine number of threads (default: use all CPU cores)
         # multi processing - parallel chains
         if nthreads == 0:
             nthreads = mp.cpu_count()
+        # end if
 
+        # Worklist = list of chain indices to execute, in reverse order
         worklist = list(np.arange(self.nchains)[::-1])
 
+        # Shared manager list to collect results from chains
         self.chainlist = self.manager.list()
         self.alive = []
         t0 = time.time()
 
+        # Launch BayWatch live-monitoring process if requested
         if baywatch:
             monitor = mp.Process(
                 name='BayWatch',
                 target=self.monitor_process,
-                kwargs={'dtsend': dtsend})
+                kwargs={'dtsend': dtsend}
+            )
             monitor.start()
+        # end if
 
         # logger.info('iteration | layers | RMS misfit | ' +
         #             'likelihood | duration | acceptance')
 
+        # Loop to spawn chains while respecting the thread limit
         while True:
             if len(mp.active_children()) > nthreads:
                 time.sleep(.5)
                 continue
+            # end if
 
             if len(worklist) == 0:
                 break
+            # end if
 
             chainidx = worklist.pop()
             logger.info('> Sending out chain %s' % chainidx)
-            p = mp.Process(name='chain %d' % chainidx, target=gochain,
-                           kwargs={'chainidx': chainidx})
+            p = mp.Process(
+                name='chain %d' % chainidx,
+                target=gochain,
+                kwargs={'chainidx': chainidx}
+            )
 
             self.alive.append(p)
             p.start()
+        # end while
 
+        # Wait for all subprocesses to finish
         # wait for chains to finish
         while True:
             alive = [process for process in self.alive
@@ -268,6 +319,7 @@ class MCMC_Optimizer(object):
 
         logger.info('> All chains terminated after: %.5f s' % (time.time() - t0))
 
+        # Retrieve completed chains into self.chains (if memory allows)
         try:
             # only necessary, if want to access chain data after an inversion,
             # i.e. all models can be accessed in the python terminal, e.g.
@@ -278,5 +330,6 @@ class MCMC_Optimizer(object):
         except:
             pass
 
+        # Report total runtime
         runtime = (time.time() - t0)
         logger.info('### time for inversion: %.2f s' % runtime)

@@ -480,7 +480,6 @@ class PlotFromStorage(object):
         # get interfaces, #first
         models2 = ModelMatrix._replace_zvnoi_h(models)
         models2 = [model[~np.isnan(model)] for model in models2]
-        print(f"Model size: {[np.cumsum(model[int(model.size/2):-1]) for model in models2]}")
         yinterf = [np.cumsum(model[int(model.size/2):-1]) for model in models2]
         yinterf = np.concatenate(yinterf)
 
@@ -523,7 +522,7 @@ class PlotFromStorage(object):
         data = axes[1].hist(yinterf, bins=depbins, orientation='horizontal',
                             color='lightgray', alpha=0.7,
                             edgecolor='k')
-        bins, lay_bin, _ = np.array(data).T
+        bins, lay_bin = data[0].T, data[1].T
         center_lay = (lay_bin[:-1] + lay_bin[1:]) / 2.
 
         axes[0].set_ylabel('Depth in km')
@@ -548,6 +547,11 @@ class PlotFromStorage(object):
             outarrays.append(p2data)
 
         return outarrays
+
+    def get_models(self, data, final, chainidx=0):
+        models, = self._get_posterior_data(data, final, chainidx)
+        return models
+    # end get_models
 
     def _plot_posterior_distribution(self, data, bins, formatter='%.2f', ax=None):
         if ax is None:
