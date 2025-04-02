@@ -124,7 +124,7 @@ def get_disp_curve(
     # Observations
     yobs = target.targets[0].obsdata.y
 
-    return xmod, ymod, yobs, cdepth
+    return xmod, ymod, yobs, cdepth, cvs
 # end get_disp_curve
 
 
@@ -178,13 +178,31 @@ def compute_top_misfit_stats(
 
     # Compute dispersion curve for each model
     top_disp_curves = []
+    depths = []
+    cvss = []
+    nlayers = []
     for i, model in enumerate(top_models):
-        xmod, ymod, yobs, cdepth = get_disp_curve(targets, model, top_vpvs[i])
+        xmod, ymod, yobs, cdepth, cvs = get_disp_curve(targets, model, top_vpvs[i])
+        print(f"cdepth: {cdepth}")
+        print(f"cdepth.shape: {cdepth.shape}")
         top_disp_curves.append(
             np.concatenate((xmod.reshape((1, -1)), ymod.reshape((1, -1))), 0).reshape(1, 2, -1)
         )
+        pad_depth = np.zeros((1, 120))
+        # print(f"pad_depth.shape: {pad_depth.shape}")
+        # print(f"cdepth.shape: {cdepth.shape}")
+        # print(cdepth.shape[1])
+        pad_depth[0, :cdepth.shape[0]] = cdepth
+        depths.append(pad_depth)
+        pad_cvs = np.zeros((1, 120))
+        pad_cvs[0, :cvs.shape[0]] = cvs
+        cvss.append(pad_cvs)
+        nlayers.append(cvs.shape[0])
     # end for
     top_disp_curves = np.concatenate(top_disp_curves, axis=0)
+    depths = np.concatenate(depths, axis=0)
+    cvss = np.concatenate(cvss, axis=0)
+    nlayers = np.array(nlayers)
 
     return {
         'stats': {
@@ -197,7 +215,10 @@ def compute_top_misfit_stats(
         'models': top_models,
         'vpvs': top_vpvs,
         'disp_curves': top_disp_curves,
-        'yobs': yobs
+        'yobs': yobs,
+        'depth': depths,
+        'cvs': cvss,
+        'nlayers': nlayers
     }
 # end compute_top_misfit_stats
 
@@ -220,7 +241,6 @@ def plot_disp_curve(models, disp_curves, yobs):
         V = disp_curves[i, 1]
         plt.plot(T, V, color=colors[i], alpha=0.6)
     # end for
-
     plt.plot(T, yobs, color='black', linewidth=2.5, label='Observed')
     plt.xlabel("Period (s)")
     plt.ylabel("Phase velocity (km/s)")
@@ -234,32 +254,36 @@ def plot_disp_curve(models, disp_curves, yobs):
 # end plot_disp_curve
 
 
-def plot_models(models, colors, dz=1.0):
+def plot_models(cvss, depths, nlayers, colors):
     """
     Plot Vs(z) models from a 2D array of shape (n_models, n_params),
     where each row contains [vs1, vs2, ..., vsN, z1, z2, ..., zN] with possible NaNs.
     If no depths are available, uses np.arange with dz as step.
 
     Parameters:
-    - models: ndarray, shape (n_models, n_params), with NaNs for unused layers
+    - cvss: ndarray, shape (n_models, n_params), with NaNs for unused layers
+    - depths: ndarray, shape (n_models, n_params), with NaNs for unused layers
+    - nlayers: ndarray, shape (n_models,), number of layers for each model
     - colors: list of matplotlib colors of length n_models
     - dz: float, step in km for synthetic depths if not available
     """
-    n_models = models.shape[0]
+    fig, ax = plt.subplots(figsize=(6, 10))
+    n_models = depths.shape[0]
     for i in range(n_models):
-        model = models[i]
-        model = model[~np.isnan(model)]
-        n = len(model) // 2
-        vs = model[:n]
-        depths = np.arange(n) * dz
-        plt.plot(vs, depths, color=colors[i], alpha=0.6)
+        n_layer = nlayers[i]
+        plt.plot(
+            cvss[i, :n_layer],
+            depths[i, :n_layer],
+            color=colors[i],
+            alpha=0.6
+        )
     # end for
 
-    plt.gca().invert_yaxis()
-    plt.xlabel("Vs (km/s)")
-    plt.ylabel("Depth (km)")
-    plt.title("Vs models (using synthetic depth)")
-    plt.grid(True)
+    ax.invert_yaxis()
+    ax.set_xlabel("Vs (km/s)")
+    ax.set_ylabel("Depth (km)")
+    ax.set_title("Vs models (using synthetic depth)")
+    ax.grid(color='gray', alpha=0.6, ls=':', lw=0.5)
     plt.tight_layout()
     plt.show()
 # end plot_models_from_array
@@ -342,7 +366,7 @@ def main(args):
     colors = plot_disp_curve(res['models'], res['disp_curves'], res['yobs'])
 
     # Plot models
-    plot_models(res['models'], colors)
+    plot_models(res['cvs'], res['depth'], res['nlayers'], colors)
 
     print("[bold green]✅ Done! Results saved in:[/bold green]", path)
 # end main
