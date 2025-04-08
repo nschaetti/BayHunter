@@ -183,15 +183,10 @@ def compute_top_misfit_stats(
     nlayers = []
     for i, model in enumerate(top_models):
         xmod, ymod, yobs, cdepth, cvs = get_disp_curve(targets, model, top_vpvs[i])
-        print(f"cdepth: {cdepth}")
-        print(f"cdepth.shape: {cdepth.shape}")
         top_disp_curves.append(
             np.concatenate((xmod.reshape((1, -1)), ymod.reshape((1, -1))), 0).reshape(1, 2, -1)
         )
         pad_depth = np.zeros((1, 120))
-        # print(f"pad_depth.shape: {pad_depth.shape}")
-        # print(f"cdepth.shape: {cdepth.shape}")
-        # print(cdepth.shape[1])
         pad_depth[0, :cdepth.shape[0]] = cdepth
         depths.append(pad_depth)
         pad_cvs = np.zeros((1, 120))
@@ -294,13 +289,18 @@ def main(args):
     print("[bold cyan]Loading realworld data...[/bold cyan]")
     data = loadmat(args.mat_file)
 
+    # Create output directory
+    if not os.path.exists(args.savepath):
+        os.makedirs(args.savepath)
+    # end if
+
     # Extract period and group velocity
     T = data['T_pick_interp'].squeeze()[::-1]  # Periods
     vg = data['vg_pick_interp'].squeeze()[::-1] / 1000.0  # Group velocity
 
     # Check
-    print(f"Periods (T): {T.shape}: {T}")
-    print(f"Speed (vg): {vg.shape}: {vg}")
+    # print(f"Periods (T): {T.shape}: {T}")
+    # print(f"Speed (vg): {vg.shape}: {vg}")
 
     # Title: Inversion of Rayleigh Dispersion Phase and Receiver Function
     print("[bold cyan]Initializing targets...[/bold cyan]")
@@ -314,7 +314,7 @@ def main(args):
 
     # Load parameters from config.ini
     print("[bold cyan]Loading parameters from config.ini...[/bold cyan]")
-    priors, initparams = utils.load_params('tutorial/config.ini')
+    priors, initparams = utils.load_params(args.ini_file)
 
     # Create dict from args
     priors, initparams = override_params(args, priors, initparams)
@@ -329,7 +329,7 @@ def main(args):
         initparams=initparams
     )
 
-    # MCMC inversion using the MCMC_Optimizer class
+    # MCMC inversion using the MCMC_Optipmizer class
     optimizer = MCMC_Optimizer(
         targets=targets,
         initparams=initparams,
@@ -360,13 +360,12 @@ def main(args):
 
     # Stats: {'mean': 0.26789723575115204, 'std': 9.025763284506014e-06, 'min': 0.26788872480392456, 'count': 100}
     # Top models: (100, 42)
-    # Top dispersion curves: (100, 2, 108)
-
+    # Top dispersion curves: (100, 2, 1
     # Plot dispersion curve and observation
-    colors = plot_disp_curve(res['models'], res['disp_curves'], res['yobs'])
+    # colors = plot_disp_curve(res['models'], res['disp_curves'], res['yobs'])
 
     # Plot models
-    plot_models(res['cvs'], res['depth'], res['nlayers'], colors)
+    # plot_models(res['cvs'], res['depth'], res['nlayers'], colors)
 
     print("[bold green]✅ Done! Results saved in:[/bold green]", path)
 # end main
@@ -380,6 +379,7 @@ if __name__ == "__main__":
 
     # Input data
     parser.add_argument("--mat-file", type=str, help="Path to the .mat file")
+    parser.add_argument("--ini-file", type=str, help="Path to the .init configuration file")
 
     # modelpriors
     parser.add_argument("--vpvs", type=float_or_tuple, help="Vp/Vs ratio or range")

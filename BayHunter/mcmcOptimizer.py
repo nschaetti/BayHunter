@@ -145,12 +145,23 @@ class MCMC_Optimizer(object):
         logger.info('... they occupy ~%d MB memory.' % memory)
 
     def _init_chain(self, chainidx, targets):
+        print(f"_init_chain")
+        print(f"chainidx = {chainidx}")
+        print(f"targets = {targets}")
+        print(f"self.priors = {self.priors}")
+        print(f"self.initparams = {self.initparams}")
         chain = SingleChain(
-            targets=targets, chainidx=chainidx, modelpriors=self.priors,
-            initparams=self.initparams, sharedmodels=self.sharedmodels,
-            sharedmisfits=self.sharedmisfits, sharedlikes=self.sharedlikes,
-            sharednoise=self.sharednoise, sharedvpvs=self.sharedvpvs,
-            random_seed=self.rstate.randint(1000))
+            targets=targets,
+            chainidx=chainidx,
+            modelpriors=self.priors,
+            initparams=self.initparams,
+            sharedmodels=self.sharedmodels,
+            sharedmisfits=self.sharedmisfits,
+            sharedlikes=self.sharedlikes,
+            sharednoise=self.sharednoise,
+            sharedvpvs=self.sharedvpvs,
+            random_seed=self.rstate.randint(1000)
+        )
 
         return chain
 

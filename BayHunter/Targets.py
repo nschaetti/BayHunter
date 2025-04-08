@@ -59,6 +59,7 @@ class ModeledData(object):
 
         elif ref in swd_targets:
             from BayHunter.surf96_modsw import SurfDisp
+            # print(f"obsx={obsx.shape}, ref={ref}")
             self.plugin = SurfDisp(obsx, ref)
             self.xlabel = 'Period in s'
 
@@ -78,9 +79,11 @@ class ModeledData(object):
     def calc_synth(self, h, vp, vs, **kwargs):
         """ Call forward modeling method of plugin."""
         rho = kwargs.pop('rho')
-
+        # print(f"h={h}, vp={vp}, vs={vs}, rho={rho}, kwargs={kwargs}")
         self.x, self.y = self.plugin.run_model(h, vp, vs, rho=rho, **kwargs)
+    # end calc_synth
 
+# end ModeledData
 
 class Valuation(object):
     """

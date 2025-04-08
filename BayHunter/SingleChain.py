@@ -418,8 +418,7 @@ exponential law. Explicitly state a noise reference for your user target \
         return True
 
 
-# accept / save current models
-
+    # accept / save current modelst
     def adjust_propdist(self):
         """
         Modify self.propdist to adjust acceptance rate of models to given
@@ -504,36 +503,37 @@ exponential law. Explicitly state a noise reference for your user target \
         self.chainiter[self.n] = self.iiter
         self.n += 1
 
-# run optimization
-
     def iterate(self):
         if self.iiter < (-self.iter_phase1 + (self.iterations * 0.01)):
             # only allow vs and z modifications the first 1 % of iterations
-            modify = self.rstate.choice(['vsmod', 'zvmod'] + self.noisemods +
-                                        self.vpvsmods)
+            modify = self.rstate.choice(['vsmod', 'zvmod'] + self.noisemods + self.vpvsmods)
         else:
             modify = self.rstate.choice(self.modifications)
+        # end if
 
         if modify in self.modelmods:
+            # Get a proposal model from the current model
             proposalmodel = self._get_modelproposal(modify)
             proposalnoise = self.currentnoise
             proposalvpvs = self.currentvpvs
             if not self._validmodel(proposalmodel):
                 proposalmodel = None
-
+            # end if
         elif modify in self.noisemods:
             proposalmodel = self.currentmodel
             proposalnoise = self._get_hyperparameter_proposal()
             proposalvpvs = self.currentvpvs
             if not self._validnoise(proposalnoise):
                 proposalmodel = None
-
+            # end if
         elif modify == 'vpvs':
             proposalmodel = self.currentmodel
             proposalnoise = self.currentnoise
             proposalvpvs = self._get_vpvs_proposal()
             if not self._validvpvs(proposalvpvs):
                 proposalmodel = None
+            # end if
+        # end if
 
         if proposalmodel is None:
             # If not a valid proposal model and noise params are found,
@@ -542,6 +542,7 @@ exponential law. Explicitly state a noise reference for your user target \
             logger.debug('Not able to find a proposal for %s' % modify)
             self.iiter += 1
             return
+        # end if
 
         # compute synthetic data and likelihood, misfit
         vp, vs, h = Model.get_vp_vs_h(proposalmodel, proposalvpvs, self.mantle)
@@ -603,7 +604,7 @@ exponential law. Explicitly state a noise reference for your user target \
         self.accepted = np.zeros(len(self.propdist))
         self.proposed = np.zeros(len(self.propdist))
 
-        # Burnin phase
+        # Burning phase
         while self.iiter < self.iter_phase2:
             self.iterate()
         # end while
@@ -624,21 +625,27 @@ exponential law. Explicitly state a noise reference for your user target \
 
         if p1ind.size != 0:
             wmodels, wlikes, wmisfits, wnoise, wvpvs = self.get_weightedvalues(
-                pind=p1ind, finaliter=0)
+                pind=p1ind,
+                finaliter=0
+            )
             self.p1models = wmodels  # p1 = phase one
             self.p1misfits = wmisfits
             self.p1likes = wlikes
             self.p1noise = wnoise
             self.p1vpvs = wvpvs
+        # end if
 
         if p2ind.size != 0:
             wmodels, wlikes, wmisfits, wnoise, wvpvs = self.get_weightedvalues(
-                pind=p2ind, finaliter=self.iiter)
+                pind=p2ind,
+                finaliter=self.iiter
+            )
             self.p2models = wmodels  # p2 = phase two
             self.p2misfits = wmisfits
             self.p2likes = wlikes
             self.p2noise = wnoise
             self.p2vpvs = wvpvs
+        # end if
 
         accmodels = float(self.p2likes.size)  # accepted models in p2 phase
         maxmodels = float(self.initparams['maxmodels'])  # for saving
@@ -646,6 +653,7 @@ exponential law. Explicitly state a noise reference for your user target \
         self.save_finalmodels()
 
         logger.debug('time for inversion: %.2f s' % runtime)
+    # end run_chain
 
     def get_weightedvalues(self, pind, finaliter):
         """

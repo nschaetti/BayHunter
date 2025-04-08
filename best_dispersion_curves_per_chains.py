@@ -120,6 +120,7 @@ def plot_dispersion_curves(
         T,
         vg,
         targets,
+        output_directory: str,
         directory: str,
         n_chains: int,
         top_n: int = 25
@@ -144,10 +145,11 @@ def plot_dispersion_curves(
 
     plt.figure(figsize=(12, 6))
 
+    saved_misfits = ""
     for chain_idx in range(n_chains):
         base_color = cmap(chain_idx % 10)
         mean_misfit = np.mean(misfits[chain_idx])
-
+        saved_misfits += f"{np.mean(misfits[chain_idx])}\n"
         for model_idx in range(top_k):
             x = disp_curves[chain_idx, model_idx, 0]
             y = disp_curves[chain_idx, model_idx, 1]
@@ -169,7 +171,15 @@ def plot_dispersion_curves(
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
-    plt.show()
+    # plt.show()
+    print(f"Saving dispersion curves to {op.join(output_directory, 'dispersion_curves.png')}")
+    plt.savefig(op.join(output_directory, "dispersion_curves.png"), dpi=300)
+
+    # Save misfits
+    print(f"Saving misfits to {op.join(output_directory, 'misfits.txt')}")
+    with open(op.join(output_directory, "misfits.txt"), "w") as f:
+        f.write(saved_misfits)
+    # end with
 
     fig, axes = plt.subplots(1, n_chains, figsize=(4 * n_chains, 8), sharey=True)
 
@@ -195,7 +205,9 @@ def plot_dispersion_curves(
         ax.grid(True)
 
     plt.tight_layout()
-    plt.show()
+    # plt.show()
+    print(f"Saving vs(z) curves to {op.join(output_directory, 'vs_z_curves.png')}")
+    plt.savefig(op.join(output_directory, "vs_z_curves.png"), dpi=300)
 # end plot_dispersion_curves
 
 
@@ -206,6 +218,7 @@ def main():
     parser.add_argument("--directory", type=str, help="Directory containing c*_p1likes.npy files")
     parser.add_argument("--n-chains", type=int, default=8, help="Number of chains")
     parser.add_argument("--top-n", type=int, default=25, help="Top N models to consider")
+    parser.add_argument("--output-directory", type=str, help="Output directory for plots")
     args = parser.parse_args()
 
     # Loading the .mat file
@@ -221,6 +234,7 @@ def main():
         vg=vg,
         targets=targets,
         directory=args.directory,
+        output_directory=args.output_directory,
         n_chains=args.n_chains,
         top_n=args.top_n
     )
