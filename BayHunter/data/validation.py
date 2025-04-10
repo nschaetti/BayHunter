@@ -7,6 +7,28 @@ import numpy as np
 from BayHunter.data import SeismicModel, SeismicPrior, SeismicParams
 
 
+# Validate VpVs ratio
+def validate_vpvs(
+        vpvs: float,
+        prior: SeismicPrior
+) -> bool:
+    """
+    Validate VpVs ratio.
+
+    :param vpvs: A VpVs ratio
+    :param prior: Prior distribution
+    :return: True if VpVs ratio is valid, False otherwise
+    """
+    if isinstance(prior.vpvs, tuple):
+        if vpvs < prior.vpvs[0] or vpvs > prior.vpvs[1]:
+            return False
+        # end if
+        return True
+    # end if
+    return True
+# end validate_vpvs
+
+
 # Validate a model
 def validate_model(
         model: SeismicModel,
@@ -21,11 +43,13 @@ def validate_model(
     :param model: Model to validate
     :return: True if model is valid, False otherwise
     """
+    # Validate VpVs ratio
+    if not validate_vpvs(model.vpvs, prior):
+        return False
+    # end if
+
     # Get Vp, Vs and h from the model
-    vp, vs, h = model.get_vp_vs_h(
-        prior.vpvs,
-        prior.mantle
-    )
+    vp, vs, h = model.get_vp_vs_h(prior.mantle)
 
     # Check wether number of layer lies within the prior
     layer_min = prior.layers[0]
@@ -55,12 +79,23 @@ def validate_model(
     # end if
 
     # Check model for low velocity zones.
-    # If larger than perc, then compvels must be positive
+    # If larger than lvz, then compvels must be positive
     if params.lvz is not None:
         compvels = vs[1:] - (vs[:-1] * (1 - params.lvz))
         if not compvels.size == compvels[compvels > 0].size:
             return False
         # end if
     # end if
+
+    # Check model for high velocity zones.
+    # If larger than hvz, then compvels must be positive
+    if params.hvz is not None:
+        compvels = (vs[:-1] * (1 + params.hvz)) - vs[1:]
+        if not compvels.size == compvels[compvels > 0].size:
+            return False
+        # end if
+    # end if
+
+    return True
 # end validate_model
 

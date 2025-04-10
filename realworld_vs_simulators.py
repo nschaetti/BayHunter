@@ -307,7 +307,8 @@ def main(args):
     print(f"[yellow]RayleighDispersionPhase: T:{T.size}, vg:{vg.size} points[/]")
 
     print("[bold cyan]Initializing RayleighDispersionPhase target...[/bold cyan]")
-    target_swd = Targets.RayleighDispersionPhase(T, vg)
+    # target_swd = Targets.RayleighDispersionPhase(T, vg)
+    target_swd = Targets.RayleighDispersionGroup(T, vg)
 
     # Join the targets
     targets = Targets.JointTarget(targets=[target_swd])

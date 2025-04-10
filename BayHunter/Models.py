@@ -40,6 +40,7 @@ class Model(object):
     def get_vp_vs_h(model, vpvs=1.73, mantle=None):
         """Return vp, vs and h from a input model [vs, z_vnoi]"""
         n, vs, z_vnoi = Model.split_modelparams(model)
+        print(f"Model: {model}, n: {n}, vs: {vs}, z_vnoi: {z_vnoi}")
         # discontinuities:
         z_disc = (z_vnoi[:n-1] + z_vnoi[1:n]) / 2.
         h_lay = (z_disc - np.concatenate(([0], z_disc[:-1])))

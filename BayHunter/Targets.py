@@ -75,6 +75,7 @@ class ModeledData(object):
 
     def update(self, plugin):
         self.plugin = plugin
+    # end update
 
     def calc_synth(self, h, vp, vs, **kwargs):
         """ Call forward modeling method of plugin."""
@@ -315,10 +316,19 @@ class JointTarget(object):
         return np.concatenate((misfits, [jointmisfit]))
 
     def evaluate(self, h, vp, vs, noise, **kwargs):
-        """This evaluation method basically evaluates the given model.
+        """
+        This evaluation method basically evaluates the given model.
         It computes the jointmisfit, and more important the jointlikelihoods.
         The jointlikelihood (here called the proposallikelihood) is the sum
-        of the log-likelihoods from each target."""
+        of the log-likelihoods from each target.
+
+        :param h: Layer thicknesses (km)
+        :param vp: P-wave velocities (km/s)
+        :param vs: S-wave velocities (km/s)
+        :param noise: Noise parameters
+        :param kwargs: Additional keyword arguments
+        """
+        # Compute layer densities
         rho = kwargs.pop('rho', vp * 0.32 + 0.77)
 
         logL = 0
@@ -337,7 +347,11 @@ class JointTarget(object):
 
             corr, sigma = noise[2*n:2*n+2]
             c_inv, logc_det = target.get_covariance(
-                sigma=sigma, size=size, yerr=yerr, corr=corr)
+                sigma=sigma,
+                size=size,
+                yerr=yerr,
+                corr=corr
+            )
 
             ydiff = target.moddata.y - target.obsdata.y
             madist = (ydiff.T).dot(c_inv).dot(ydiff)

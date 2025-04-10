@@ -59,20 +59,32 @@ class SingleChain(object):
         self.mantle = self.priors['mantle']
 
         # chain models
-        self._init_chainarrays(sharedmodels, sharedmisfits, sharedlikes,
-                               sharednoise, sharedvpvs)
+        self._init_chainarrays(
+            sharedmodels,
+            sharedmisfits,
+            sharedlikes,
+            sharednoise,
+            sharedvpvs
+        )
 
         # init model and values
         self._init_model_and_currentvalues()
-
+    # end __init__
 
 # init model and misfit / likelihood
 
     def _init_model_and_currentvalues(self):
+        """
+        Initialize the model and the current values.
+        The model is drawn from the prior distribution and the current values
+        are set to the initial values.
+        """
         ivpvs = self.draw_initvpvs()
         self.currentvpvs = ivpvs
+
         imodel = self.draw_initmodel()
         # self.currentmodel = imodel
+
         inoise, corrfix = self.draw_initnoiseparams()
         # self.currentnoise = inoise
 
@@ -84,12 +96,12 @@ class SingleChain(object):
 
         # self.currentmisfits = self.targets.proposalmisfits
         # self.currentlikelihood = self.targets.proposallikelihood
-
         logger.debug((vs, h))
 
         self.n = 0  # accepted models counter
         self.accept_as_currentmodel(imodel, inoise, ivpvs)
         self.append_currentmodel()
+    # end _init_model_and_currentvalues
 
     def draw_initmodel(self):
         keys = self.priors.keys()
@@ -122,7 +134,10 @@ class SingleChain(object):
                else self.draw_initmodel())
 
     def draw_initnoiseparams(self):
-        # for each target the noiseparams are (corr and sigma)
+        """
+        :return:
+        """
+        # For each target the noiseparams are (corr and sigma)
         noiserefs = ['noise_corr', 'noise_sigma']
         init_noise = np.ones(len(self.targets.targets)*2) * np.nan
         corrfix = np.zeros(len(self.targets.targets)*2, dtype=bool)
@@ -137,16 +152,18 @@ class SingleChain(object):
                     corrfix[idx] = True
                     init_noise[idx] = noiseprior
                 else:
-                    init_noise[idx] = self.rstate.uniform(
-                        low=noiseprior[0], high=noiseprior[1])
+                    init_noise[idx] = self.rstate.uniform(low=noiseprior[0], high=noiseprior[1])
+                # end if
 
                 self.noisepriors.append(noiseprior)
 
         self.noiseinds = np.where(corrfix == 0)[0]
         if len(self.noiseinds) == 0:
             logger.warning('All your noise parameters are fixed. On Purpose?')
+        # end if
 
         return init_noise, corrfix
+    # end draw_initnoiseparams
 
     def draw_initvpvs(self):
         if type(self.priors['vpvs']) == float:
