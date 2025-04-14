@@ -1,0 +1,5 @@
+outs:
+- md5: 09ec9e458ec101cee864b9170c8fd77d
+  size: 628227
+  hash: md5
+  path: shard_00002.parquet
