@@ -287,7 +287,7 @@ c-----
                 c1 = c1 -onea*dc
                 call getsol(t1,c2,clow,dc,cm,betmx,iret,ifunc,ifirst,d,a,b)
 c-----
-c     test if root not found at slightly larger period
+c     BayHunter_Test if root not found at slightly larger period
 c-----
                 if(iret.eq.-1)then
                     c1 = c(k)
@@ -407,7 +407,7 @@ c         - 2 - Rayleigh
 c     ifirst  - 1 this is first period for a particular mode
 c         - 0 this is not the first period
 c             (this is to define period equation sign
-c              for mode jumping test)
+c              for mode jumping BayHunter_Test)
 c-----
         parameter (NL=100)
         double precision wvno, omega, twopi

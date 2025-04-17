@@ -3,7 +3,7 @@
 # Copyright Nils Schaetti
 #
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import numpy as np
 import json
 import yaml
@@ -42,7 +42,7 @@ class SeismicParams:
         lvz: Optional[float] = None,
         hvz: Optional[float] = None,
         rcond: float = 1e-5,
-        station: str = "test",
+        station: str = "BayHunter_Test",
         savepath: str = "results",
         maxmodels: int = 50000,
     ):
@@ -76,6 +76,39 @@ class SeismicParams:
         self.maxmodels = maxmodels
     # end __init__
 
+    # To dictionary
+    def to_dict(
+            self,
+            include: Optional[List[str]] = None
+    ) -> dict:
+        """
+        Convert the seismic parameters to a dictionary.
+
+        :param include: Optional tuple of parameter names to include in the dictionary.
+        :type include: tuple
+        :return: Dictionary representation of the seismic parameters
+        :rtype: dict
+        """
+        if include is None:
+            include = [
+                "nchains",
+                "iter_burnin",
+                "iter_main",
+                "propdist",
+                "acceptance",
+                "thickmin",
+                "lvz",
+                "hvz",
+                "rcond",
+                "station",
+                "savepath",
+                "maxmodels"
+            ]
+        # end if
+
+        return {k: getattr(self, k) for k in include}
+    # end to_dict
+
     @classmethod
     def from_dict(cls, d: dict) -> "SeismicParams":
         """
@@ -106,7 +139,7 @@ class SeismicParams:
             lvz=parse(d.get("lvz", None)),
             hvz=parse(d.get("hvz", None)),
             rcond=float(d.get("rcond", 1e-5)),
-            station=d.get("station", "test"),
+            station=d.get("station", "BayHunter_Test"),
             savepath=d.get("savepath", "results"),
             maxmodels=int(d.get("maxmodels", 50000)),
         )
@@ -157,6 +190,26 @@ class SeismicPrior:
         self.noise_corr = noise_corr
         self.noise_sigma = noise_sigma
     # end __init__
+
+    # To dictionary
+    def to_dict(self) -> dict:
+        """
+        Convert the seismic prior to a dictionary.
+
+        :return: Dictionary representation of the seismic prior
+        :rtype: dict
+        """
+        return {
+            "vs": self.vs,
+            "z": self.z,
+            "layers": self.layers,
+            "vpvs": self.vpvs,
+            "mohoest": self.mohoest,
+            "mantle": self.mantle,
+            "noise_corr": self.noise_corr,
+            "noise_sigma": self.noise_sigma
+        }
+    # end to_dict
 
     @classmethod
     def from_dict(cls, d: dict) -> "SeismicPrior":

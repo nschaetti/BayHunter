@@ -5,18 +5,18 @@
 # Imports
 from huggingface_hub import HfApi, HfFolder, upload_folder
 import os
+from pathlib import Path
 import json
 
 
 # Generate a README.md dataset card for HuggingFace
 def generate_dataset_card(
-    output_dir: str,
+    output_dir: Path,
     license_name: str = "mit",
     pretty_name: str = "Synthetic Seismic Dataset",
     size_category: str = "100K<n<1M",
     generation_commands: list = None,
-    download_example: bool = True,
-    repo_id: str = None
+    download_example: bool = True
 ):
     """
     Create a README.md dataset card for HuggingFace.
@@ -27,15 +27,13 @@ def generate_dataset_card(
     :param size_category: e.g., '100K<n<1M'
     :param generation_commands: List of commands used to generate the dataset
     :param download_example: Whether to include example download instructions
-    :param repo_id: Optional repo_id for HuggingFace (e.g., 'nils-schaetti/seismic-dataset')
     """
     # Dataset card header
     yaml_header = f"""---
 license: {license_name}
 pretty_name: {pretty_name}
 task_categories:
-  - geophysics
-  - regression
+  - other
 language:
   - multilingual
 tags:
@@ -84,12 +82,12 @@ size_categories:
 
     # Download instructions
     body += "\n## Download Instructions\n"
-    if repo_id and download_example:
+    if download_example:
         body += f"You can download the dataset via the 🤗 Hub CLI:\n\n"
-        body += f"```bash\nhuggingface-cli download dataset {repo_id} --local-dir ./seismic-dataset\n```\n"
+        body += f"```bash\nhuggingface-cli download dataset <repo-id> --local-dir ./seismic-dataset\n```\n"
         body += f"\nOr use `datasets` in Python:\n"
         body += f"```python\nfrom datasets import load_dataset\n"
-        body += f"ds = load_dataset('{repo_id}', split='train')\n```\n"
+        body += f"ds = load_dataset('<repo-id>', split='train')\n```\n"
     else:
         body += "_Repo ID not provided for download examples._\n"
     # end if
@@ -99,8 +97,6 @@ size_categories:
     with open(readme_path, "w") as f:
         f.write(yaml_header + "\n" + body)
     # end with
-
-    print(f"Dataset card written to {readme_path}")
 # end generate_dataset_card
 
 

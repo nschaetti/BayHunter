@@ -7,22 +7,24 @@ import numpy as np
 import click
 import math
 import random
-import json
-import datetime
-from pathlib import Path
 from rich.console import Console
 from rich.table import Table
+from rich.traceback import install
 import configparser
+from pathlib import Path
 import matplotlib.pyplot as plt
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+# Imports BayHunter
 from BayHunter.data import SurfDispModel
 from BayHunter.data import SeismicPrior, sample_model, SeismicParams, SeismicModel, SeismicSample
 from BayHunter.data.huggingface import upload_dataset_to_hf, generate_dataset_card
+from BayHunter.data import save_dataset_info, generate_folds_json
 
 
 console = Console()
+install(show_locals=True)
 
 
 @click.group()
@@ -31,170 +33,20 @@ def cli():
 # end cli
 
 
-def save_dataset_info(
-        output_dir: str,
-        dataset_name: str,
-        dataset_description: str,
-        prior: SeismicPrior,
-        params: SeismicParams,
-        dispersion_length: int,
-        n_samples: int,
-        samples_per_shard: int,
-        seed: int,
-        ini_file: str,
-        folds_file: str = "folds.json"
-):
+# Convert tuple of integers to a list of integers
+def tuple_of_ints(value):
     """
-    Save dataset metadata information to dataset_info.json.
+    Convert a string representation of a tuple to an actual tuple of integers.
 
-    :param output_dir: Path where to save the file.
-    :param dataset_name: Name of the dataset.
-    :param dataset_description: Description of the dataset.
-    :param prior: SeismicPrior object used for generation.
-    :param params: SeismicParams object used for generation.
-    :param dispersion_length: Number of periods in the dispersion curve.
-    :param n_samples: Total number of samples generated.
-    :param samples_per_shard: Number of samples per shard file.
-    :param seed: Random seed used.
-    :param ini_file: INI config file path used to generate the dataset.
-    :param folds_file: Path to the folds.json file (relative to output_dir).
+    :param value: String representation of a tuple (e.g., "2,5,10)")
+    :return: Tuple of integers
     """
-    n_shards = int(n_samples // samples_per_shard)
-    dataset_info = {
-        "dataset_name": dataset_name,
-        "description": dataset_description,
-        "generation": {
-            "seed": seed,
-            "random_generator": "numpy.default_rng",
-            "n_samples": n_samples,
-            "samples_per_shard": samples_per_shard,
-            "n_shards": n_shards,
-            "source": "sample_model + forward",
-            "ini_file": ini_file
-        },
-        "priors": {
-            "vs": prior.vs,
-            "z": prior.z,
-            "layers": prior.layers,
-            "vpvs": prior.vpvs,
-            "mohoest": prior.mohoest,
-            "mantle": prior.mantle,
-            "noise_corr": prior.noise_corr,
-            "noise_sigma": prior.noise_sigma
-        },
-        "params": {
-            "nchains": params.nchains,
-            "iter_burnin": params.iter_burnin,
-            "iter_main": params.iter_main,
-            "propdist": params.propdist,
-            "acceptance": params.acceptance,
-            "thickmin": params.thickmin,
-            "lvz": params.lvz,
-            "hvz": params.hvz,
-            "rcond": params.rcond,
-            "station": params.station,
-            "savepath": params.savepath,
-            "maxmodels": params.maxmodels
-        },
-        "model_parameters": {
-            "dispersion_curve_length": dispersion_length
-        },
-        "features": {
-            "vs": {"type": "list<float32>", "variable_length": True},
-            "z": {"type": "list<float32>", "variable_length": True},
-            "vpvs": {"type": "float32"},
-            "disp_x": {"type": "list<float32>", "length": dispersion_length},
-            "disp_y": {"type": "list<float32>", "length": dispersion_length},
-            "wave_type": {"type": "string"},
-            "velocity_type": {"type": "string"}
-        },
-        "folds": {
-            "available": ["2fold", "5fold", "10fold"],
-            "fold_file": folds_file
-        },
-        "format": "parquet",
-        "license": "Copyright DMML, HEG Genève 2025",
-        "created_by": "Nils Schaetti",
-        "creation_date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-
-    # Save to disk
-    with open(os.path.join(output_dir, "dataset_info.json"), "w") as f:
-        json.dump(dataset_info, f, indent=4)
-    # end with
-
-    print("✅ dataset_info.json saved.")
-# end save_dataset_info
-
-
-# Generate folds.json
-def generate_folds_json(
-        shard_dir: str,
-        output_path: str,
-        kfolds=None,
-        train_ratio: float = 0.8,
-        seed: int = 42
-):
-    """
-    Generate folds.json file mapping shards to folds for k-fold cross-validation and train/test split.
-
-    :param shard_dir: Directory containing .parquet shards
-    :param output_path: Path to save the folds.json
-    :param kfolds: List of k values for k-fold CV
-    :param train_ratio: Train/test split ratio (for 2-fold)
-    :param seed: Random seed for reproducibility
-    """
-    # Set seed
-    if kfolds is None:
-        kfolds = [2, 5, 10]
+    if isinstance(value, str):
+        value = value.split(",")
+        value = [int(v) for v in value]
     # end if
-
-    # Set random seed
-    random.seed(seed)
-
-    # Get list of all .parquet shards
-    shard_paths = sorted([
-        f.name for f in Path(shard_dir).glob("*.parquet")
-    ])
-    n_shards = len(shard_paths)
-    if n_shards == 0:
-        raise ValueError("No .parquet shards found in the directory.")
-    # end if
-
-    # Shuffle deterministically
-    random.shuffle(shard_paths)
-
-    # Folds
-    folds = {}
-
-    # 2-fold (train/test)
-    split_index = int(train_ratio * n_shards)
-    folds["2-fold"] = {
-        "train": shard_paths[:split_index],
-        "test": shard_paths[split_index:]
-    }
-
-    # k-folds
-    for k in kfolds:
-        if k == 2:
-            continue  # Already handled
-        # end if
-        folds[f"{k}-fold"] = {}
-        fold_size = n_shards // k
-        for i in range(k):
-            start = i * fold_size
-            end = (i + 1) * fold_size if i < k - 1 else n_shards
-            folds[f"{k}-fold"][f"fold-{i}"] = shard_paths[start:end]
-        # end for
-    # end for
-
-    # Save to JSON
-    with open(output_path, "w") as f:
-        json.dump(folds, f, indent=2)
-    # end with
-
-    return folds
-# end generate_folds_json
+    return tuple(value)
+# end tuple_of_ints
 
 
 @cli.command("generate-dataset")
@@ -202,67 +54,99 @@ def generate_folds_json(
 @click.option("--pretty-name", type=str, required=True, help="Pretty name of the dataset")
 @click.option("--description", type=str, required=True, help="Description of the dataset")
 @click.option("--license-name", type=str, default="other", help="License name")
-@click.option("--repo-id", type=str, default=None, help="Repository ID on Hugging Face Hub")
-@click.option("--create-repo/--no-create-repo", default=True, help="Create repo on Hugging Face Hub")
+@click.option("--created-by", type=str, default="Unknown", help="Name of the creator")
 @click.option("--ini-file", type=click.Path(exists=True), required=True, help="Path to .ini file with modelpriors and initparams")
 @click.option("--output-dir", type=click.Path(), required=True, help="Directory to save generated dataset")
 @click.option("--n-samples", type=int, required=True, help="Total number of samples to generate")
 @click.option("--samples-per-shard", type=int, default=10000, help="Number of samples per shard file")
-@click.option("--length", type=int, default=60, help="Length of the dispersion curve")
+@click.option("--length", type=int, default=108, help="Length of the dispersion curve")
 @click.option("--test-ratio", type=float, default=0.2, help="Test set ratio for 2-fold cross-validation")
+@click.option("--folds", type=tuple_of_ints, default=(2, 5, 10), help="List of k values for k-fold cross-validation (ex: 2,5,10)")
 @click.option("--seed", type=int, default=42, help="Random seed for reproducibility")
+@click.option("--write-dataset-info", is_eager=True, is_flag=True, help="Write JSON files")
+@click.option("--write-folds", is_eager=True, is_flag=True, help="Write folds.json")
+@click.option("--write-dataset-card", is_eager=True, is_flag=True, help="Write dataset card")
 def generate_dataset_cli(
         name,
         pretty_name,
         description,
         license_name,
-        repo_id,
-        create_repo,
+        created_by: str,
         ini_file,
         output_dir,
         n_samples,
         samples_per_shard,
         length,
         test_ratio,
-        seed
+        folds,
+        seed,
+        write_dataset_info: bool,
+        write_folds: bool,
+        write_dataset_card: bool
 ):
     """
     Generate synthetic seismic dataset (models + dispersion curves) and save in Arrow format.
+
     :param name: Name of the dataset
+    :type name: str
     :param pretty_name: Pretty name of the dataset
+    :type pretty_name: str
     :param description: Description of the dataset
+    :type description: str
     :param license_name: License name
-    :param repo_id: Repository ID on Hugging Face Hub
-    :param create_repo: Create repo on Hugging Face Hub
+    :type license_name: str
+    :param created_by: Name of the creator
+    :type created_by: str
     :param ini_file: Path to .ini file with modelpriors and initparams
+    :type ini_file: str
     :param output_dir: Directory to save generated dataset
+    :type output_dir: str
     :param n_samples: Total number of samples to generate
+    :type n_samples: int
     :param samples_per_shard: Number of samples per shard file
+    :type samples_per_shard: int
     :param length: Length of the dispersion curve
+    :type length: int
     :param test_ratio: Test set ratio for 2-fold cross-validation
+    :type test_ratio: float
+    :param folds: List of k values for k-fold cross-validation (ex: 2,5,10)
+    :type folds: tuple
     :param seed: Random seed for reproducibility
+    :type seed: int
+    :param write_dataset_info: Write JSON files
+    :type write_dataset_info: bool
+    :param write_folds: Write folds.json
+    :type write_folds: bool
+    :param write_dataset_card: Write dataset card
+    :type write_dataset_card: bool
     """
-    # Seed
-    rng = np.random.default_rng(seed)
+    # Set seed for reproducibility
+    np.random.seed(seed)
+    random.seed(seed)
+
+    # Output directory
+    output_dir = Path(output_dir)
 
     # Load config
     config = configparser.ConfigParser()
     config.read(ini_file)
+
+    # Get prior and params
     prior = SeismicPrior.from_dict(dict(config['modelpriors']))
     params = SeismicParams.from_dict(dict(config['initparams']))
 
-    # Validate parameters
-    os.makedirs(output_dir, exist_ok=True)
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Number of shards
     nshards = math.ceil(n_samples / samples_per_shard)
-    click.echo(f"Generating {n_samples} samples in {nshards} shards of {samples_per_shard} each...")
+    console.log(f"Generating {n_samples} samples in {nshards} shards of {samples_per_shard} each...")
 
     # Generate samples
     for shard_id in range(nshards):
         samples = []
         for _ in range(samples_per_shard):
-            model = sample_model(prior, params, random_seed=rng.integers(0, 1e9))
+            model = sample_model(prior, params, random_seed=np.random.randint(0, 2**32 - 1))
             curve = model.forward(length=length)
             sample = SeismicSample(model, curve)
             samples.append(sample.to_arrow_dict())
@@ -270,34 +154,41 @@ def generate_dataset_cli(
 
         # Convert to Arrow table
         table = pa.table({k: [s[k] for s in samples] for k in samples[0].keys()})
-        shard_path = os.path.join(output_dir, f"shard_{shard_id:05d}.parquet")
-        pq.write_table(table, shard_path)
-        console.print(f"[Shard {shard_id}] Saved {shard_path}")
+        shard_path = output_dir / f"shard_{shard_id:05d}.parquet"
+        pq.write_table(table, str(shard_path))
+        console.log(f"[Shard {shard_id}] Saved {shard_path}")
     # end for
 
     # Generate folds.json
-    generate_folds_json(
-        shard_dir=output_dir,
-        output_path=os.path.join(output_dir, "folds.json"),
-        kfolds=[2, 5, 10],
-        train_ratio=1 - test_ratio,
-    )
+    if write_folds:
+        generate_folds_json(
+            shard_dir=output_dir,
+            output_path=output_dir / "folds.json",
+            k_folds=folds,
+            train_ratio=1 - test_ratio,
+        )
+        console.log(f"Generated folds.json in {output_dir}")
+    # end if
 
     # Save dataset info
-    save_dataset_info(
-        output_dir=output_dir,
-        dataset_name=name,
-        dataset_description=description,
-        prior=prior,
-        params=params,
-        dispersion_length=length,
-        n_samples=n_samples,
-        samples_per_shard=samples_per_shard,
-        seed=seed,
-        ini_file=os.path.basename(ini_file)  # relative path
-    )
+    if write_dataset_info:
+        save_dataset_info(
+            output_dir=output_dir,
+            dataset_name=name,
+            dataset_description=description,
+            prior=prior,
+            params=params,
+            dispersion_length=length,
+            n_samples=n_samples,
+            samples_per_shard=samples_per_shard,
+            seed=seed,
+            ini_file=os.path.basename(ini_file),
+            created_by=created_by
+        )
+        console.log(f"Saved dataset_info.json in {output_dir}")
+    # end if
 
-    if repo_id:
+    if write_dataset_card:
         # Determine size category from HuggingFace convention
         if n_samples < 1_000:
             size_category = "n<1K"
@@ -321,24 +212,31 @@ def generate_dataset_cli(
             size_category=size_category,
             generation_commands=[
                 f"python3 -m BayHunter generate-dataset --ini-file {ini_file} --output-dir {output_dir} "
-                f"--n-samples {n_samples} --samples-per-shard {samples_per_shard} --seed {seed} "
-                f"--repo-id {repo_id}"
+                f"--n-samples {n_samples} --samples-per-shard {samples_per_shard} --seed {seed} --length {length} "
+                f"--test-ratio {test_ratio} --folds {','.join(map(str, folds))}"
             ],
-            download_example=True,
-            repo_id=repo_id
+            download_example=True
         )
-
-        # Upload to Hugging Face
-        upload_dataset_to_hf(
-            output_dir=output_dir,
-            repo_id=repo_id,
-            private=True,
-            commit_message="First upload of synthetic seismic dataset",
-            create_repo=create_repo
-        )
+        console.log(f"Generated dataset card in {output_dir}")
     # end if
 
-    console.print("\n✅ Dataset generation complete.")
+    # if repo_id:
+    #     # Upload to Hugging Face
+    #     upload_dataset_to_hf(
+    #         output_dir=output_dir,
+    #         repo_id=repo_id,
+    #         private=True,
+    #         commit_message="First upload of synthetic seismic dataset",
+    #         create_repo=create_repo
+    #     )
+    # # end if
+
+    console.log("Dataset generation complete.")
+    console.log(
+        "You can now upload the dataset on HuggingFace with: "
+        "`huggingface-cli upload MIGRATE/<dataset-name> <loca-path> . --repo-type dataset "
+        "--commit-message \"<commit-message>\" --private`"
+    )
 # end generate_dataset
 
 
