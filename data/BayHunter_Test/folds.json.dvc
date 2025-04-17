@@ -1,0 +1,5 @@
+outs:
+- md5: e18d48b0e9c287852e79a1098d23937f
+  size: 1223
+  hash: md5
+  path: folds.json
