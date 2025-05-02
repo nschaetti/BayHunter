@@ -281,6 +281,25 @@ class DispersionCurve:
 
     # region PUBLIC
 
+    def misfit(self, dc: 'DispersionCurve'):
+        """
+        Calculate the misfit between this dispersion curve and another one.
+
+        Args:
+            dc (DispersionCurve): The other dispersion curve to compare with.
+
+        Returns:
+            float: The misfit value.
+        """
+        # Check if the two curves have the same number of points
+        if len(self.x) != len(dc.x):
+            raise ValueError("Dispersion curves must have the same number of points for misfit calculation.")
+        # end if
+
+        # Calculate the misfit
+        return np.sum((self.y - dc.y) ** 2)
+    # end misfit
+
     def as_array(self) -> np.ndarray:
         """
         Returns the dispersion curve as a (2, N) numpy array (periods, velocities).
@@ -288,7 +307,7 @@ class DispersionCurve:
         return np.stack((self.x, self.y), axis=0)
     # end as_array
 
-    def plot(self, ax=None, label=None, color=None, linestyle='-'):
+    def plot(self, ax=None, label=None, color=None, linestyle='-', linewidth=1, alpha=1.0):
         """
         Plot the dispersion curve using matplotlib.
         """
@@ -296,7 +315,7 @@ class DispersionCurve:
         if ax is None:
             fig, ax = plt.subplots()
         # end if
-        ax.plot(self.x, self.y, label=label or self.source, color=color, linestyle=linestyle)
+        ax.plot(self.x, self.y, color=color, linestyle=linestyle, linewidth=linewidth, alpha=alpha)
         ax.set_xlabel("Period (s)")
         ax.set_ylabel("Group Velocity (km/s)")
         ax.set_title("Dispersion Curve")
@@ -594,23 +613,35 @@ class SeismicModel(object):
         )
     # end forward
 
-    def plot(self, ax=None, title="Model", invert_axes=False, label=None, color=None, linestyle='-'):
+    def plot(
+            self,
+            ax=None,
+            title="Model",
+            invert_axes=False,
+            label=None,
+            color=None,
+            linewidth=1,
+            linestyle='-',
+            alpha=1.0
+    ):
         """
         Plot the seismic model.
 
-        :param ax: Matplotlib Axes object (optional)
-        :param title: Title of the plot
-        :param invert_axes: If True, plot velocity on X and depth on Y
-        :param label: Optional legend label
-        :param color: Optional curve color
-        :param linestyle: Line style (default: '-')
-        :return: Axes object
+        Args:
+            ax: Matplotlib axis to plot on (optional).
+            title: Title of the plot.
+            invert_axes: If True, invert the axes.
+            label: Label for the plot.
+            color: Color of the plot line.
+            linewidth: Width of the plot line.
+            linestyle: Style of the plot line.
+            alpha: Transparency of the plot line.
         """
         vp, vs, h = self.get_vp_vs_h()
         z_interfaces = np.cumsum(h)
-        z_interfaces[-1] = self.z[-1]  # assurer cohérence avec profondeur finale
+        z_interfaces[-1] = self.z[-1]
 
-        # Étend la courbe en escalier
+        # Extend the velocity and depth arrays for plotting
         vs_plot = np.repeat(vs, 2)
         z_plot = np.zeros_like(vs_plot)
         z_plot[1:-1:2] = z_interfaces[:-1]
@@ -623,12 +654,12 @@ class SeismicModel(object):
         # end if
 
         if invert_axes:
-            ax.plot(vs_plot, z_plot, label=label, color=color, linestyle=linestyle)
+            ax.plot(vs_plot, z_plot, label=label, color=color, linestyle=linestyle, linewidth=linewidth, alpha=alpha)
             ax.set_xlabel("Velocity (km/s)")
             ax.set_ylabel("Depth (km)")
             ax.invert_yaxis()
         else:
-            ax.plot(z_plot, vs_plot, label=label, color=color, linestyle=linestyle)
+            ax.plot(z_plot, vs_plot, label=label, color=color, linestyle=linestyle, linewidth=linewidth)
             ax.set_xlabel("Depth (km)")
             ax.set_ylabel("Velocity (km/s)")
         # end if
@@ -987,6 +1018,20 @@ class SurfDispModel(object):
 
         # Output value
         dispvel = np.zeros(KMAX_MAX)
+
+        # print(f"Running SurfDisp with {kmax} periods...")
+        # print(f"h = {h}")
+        # print(f"vp = {vp}")
+        # print(f"vs = {vs}")
+        # print(f"rho = {rho}")
+        # print(f"nlayer = {nlayer}")
+        # print(f"iflsph = {iflsph}")
+        # print(f"iwave = {iwave}")
+        # print(f"mode = {mode}")
+        # print(f"igr = {igr}")
+        # print(f"kmax = {kmax}")
+        # print(f"pers = {pers}")
+        # print(f"dispvel = {dispvel}")
 
         # Call Fortran code
         error = surfdisp96(

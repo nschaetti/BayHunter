@@ -20,7 +20,7 @@ class MyForwardModel(object):
         # default parameters necessary for forward modeling
         # the dictionary can be updated by the user
         self.modelparams.update(
-            {'test': 5,
+            {'BayHunter_Test': 5,
              })
 
     def set_modelparams(self, **mparams):
@@ -31,7 +31,7 @@ class MyForwardModel(object):
         Method to compute the synthetic data. Here you probably need to
         include your quick e.g. fortran written code.
         """
-        test = self.modelparams['test']
+        test = self.modelparams['BayHunter_Test']
 
         z = np.cumsum(h)
         z = np.concatenate(([0], z[:-1]))

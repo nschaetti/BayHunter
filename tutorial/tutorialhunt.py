@@ -41,7 +41,7 @@ logger = logging.getLogger()
 initfile = 'config.ini'
 priors, initparams = utils.load_params(initfile)
 
-# Load observed data (synthetic test data)
+# Load observed data (synthetic BayHunter_Test data)
 xsw, _ysw = np.loadtxt('observed/st3_rdispph.dat').T
 xrf, _yrf = np.loadtxt('observed/st3_prf.dat').T
 

@@ -14,7 +14,7 @@ draws = 40000
 # more draws (= larger sample) show more precise and smoother results,
 # but are slower in computation.
 
-rrfs = [0.75, 0.85, 0.95, 0.97, 0.98, 0.99]  # test r_RFs
+rrfs = [0.75, 0.85, 0.95, 0.97, 0.98, 0.99]  # BayHunter_Test r_RFs
 
 pars = {'rfx': rfx, 'rfy': rfy, 'rfa': rfa,
         'a': rfa, 'dt': dt, 'rrfs': rrfs,
@@ -33,7 +33,7 @@ fig.savefig('st3_rrf_estimate.pdf', bbox_inches='tight')
 # -------------------------------------- return values for costum visualization
 #
 
-# update test r_RFs for more continuous estimates
+# update BayHunter_Test r_RFs for more continuous estimates
 pars['rrfs'] = np.linspace(0.9, 0.999, 25)
 pars['draws'] = 2000
 # quicker computation by less draws (= smaller sample size from distribution),
@@ -41,7 +41,7 @@ pars['draws'] = 2000
 # sample, draw more samples by looping over a number.
 # However, I recommend to increase the number of draws (e.g., 30 000)
 # and wait a bit longer...
-# As always, test different settings to find your best r_RF estimate
+# As always, BayHunter_Test different settings to find your best r_RF estimate
 
 plt.close()
 fig, ax = plt.subplots()

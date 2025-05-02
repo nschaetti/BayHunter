@@ -6,7 +6,9 @@ import os
 import numpy as np
 import click
 import math
+import concurrent.futures
 import random
+from matplotlib import cm
 from rich.console import Console
 from rich.table import Table
 from rich.traceback import install
@@ -15,16 +17,21 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pyarrow as pa
 import pyarrow.parquet as pq
+from tqdm import tqdm
 
 # Imports BayHunter
 from BayHunter.data import SurfDispModel
 from BayHunter.data import SeismicPrior, sample_model, SeismicParams, SeismicModel, SeismicSample
 from BayHunter.data.huggingface import upload_dataset_to_hf, generate_dataset_card
-from BayHunter.data import save_dataset_info, generate_folds_json
+from BayHunter.data import save_dataset_info, generate_folds_json, validate_model
 
 
 console = Console()
-install(show_locals=True)
+install(show_locals=False)
+
+
+# Simulation Timeout
+SIM_TIMEOUT = 2.0
 
 
 @click.group()
@@ -49,10 +56,631 @@ def tuple_of_ints(value):
 # end tuple_of_ints
 
 
+class FloatListParamType(click.ParamType):
+
+    name = "float_list"
+
+    def convert(self, value, param, ctx):
+        try:
+            return [float(v.strip()) for v in value.split(",")]
+        except ValueError:
+            self.fail(f"{value} is not a valid comma-separated list of floats", param, ctx)
+        # end try
+    # end convert
+
+# end FloatListParamType
+FLOAT_LIST = FloatListParamType()
+
+
+def safe_forward(
+        model,
+        length
+):
+    """
+    Run the forward method of the model in a separate thread to avoid blocking the main thread.
+
+    Args:
+        model (SeismicModel): The seismic model to run the forward method on.
+        length (int): The length of the dispersion curve.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(model.forward, length=length)
+        try:
+            return future.result(timeout=SIM_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError("model.forward took too long and was terminated.")
+        # end try
+    # end with
+# end safe_forward
+
+
+@cli.command("plot-2d-perturbations")
+@click.option("--vpvs", type=float, default=1.75, help="Vp/Vs ratio")
+@click.option("--vs", type=FLOAT_LIST, required=True, help="List of Vs values in Km/s (e.g., --vs 2.174 2.46)")
+@click.option("--z", type=FLOAT_LIST, required=True, help="List of Z values in Km (e.g., --z 1.24 10.91)")
+@click.option("--vs-noise", type=float, default=0.1, help="Noise on Vs values")
+@click.option("--vs-noise-samples", type=int, default=50, help="Number of samples to generate for Vs noise")
+@click.option("--z-noise", type=float, default=0.1, help="Noise on Z values")
+@click.option("--z-noise-samples", type=int, default=50, help="Number of samples to generate for Z noise")
+@click.option("--n-samples", type=int, default=100, help="Number of samples to generate")
+@click.option("--length", type=int, default=60, help="Length of the dispersion curve")
+def plot_2d_perturbations(
+        vpvs,
+        vs,
+        z,
+        vs_noise,
+        vs_noise_samples,
+        z_noise,
+        z_noise_samples,
+        n_samples,
+        length,
+        seed: int = 42
+):
+    """
+    Run the forward modeling process using either a saved model or priors from an ini file.
+
+    Args:
+        vpvs (float): Vp/Vs ratio
+        vs (tuple): Tuple of Vs values (velocity)
+        z (tuple): Tuple of depth values (depth)
+        vs_noise (float): Noise on Vs values
+        vs_noise_samples (int): Number of samples to generate for Vs noise
+        z_noise (float): Noise on Vs values
+        z_noise_samples (int): Number of samples to generate for Vs noise
+        n_samples (int): Number of samples to generate
+        length (int): Length of the dispersion curve
+        seed (int): Random seed for reproducibility
+    """
+    # Set seed
+    np.random.seed(seed)
+
+    # To numpy array
+    vs = np.array(vs)
+    z = np.array(z)
+
+    # Check if Vs and Z are the same length
+    if len(vs) != len(z):
+        raise click.UsageError("The number of Vs and Z values must be the same.")
+    # end if
+
+    # Log number of layers
+    console.print(f"[yellow]Number of layers: {vs.shape[0]}[/yellow]")
+
+    # List of model and dispersion curves
+    misfits = np.zeros((vs_noise_samples, z_noise_samples, n_samples))
+
+    # Base model
+    base_model = SeismicModel(
+        model=np.concatenate((vs, z)),
+        vpvs=vpvs
+    )
+    base_dc = base_model.forward(length=length)
+
+    # Total iterations for progress bar
+    total = vs_noise_samples * z_noise_samples * n_samples
+    progress_bar = tqdm(total=total, desc="Generating models", unit="sample")
+
+    # For each noise level
+    for j, vs_nl in enumerate(np.linspace(0, vs_noise, vs_noise_samples)):
+        for k, z_nl in enumerate(np.linspace(0, z_noise, z_noise_samples)):
+            # For each sample
+            for i in range(n_samples):
+                ok = False
+                retry = 0
+                while not ok:
+                    # Put Vs and layers together
+                    model = SeismicModel(
+                        model=np.concatenate(
+                            (
+                                vs + np.random.randn(vs.shape[0]) * vs_nl,
+                                z + np.random.randn(z.shape[0]) * z_nl
+                            )
+                        ),
+                        vpvs=vpvs
+                    )
+
+                    # Forward modeling
+                    try:
+                        dc = model.forward(length=length)
+                        ok = True
+                    except TypeError as e:
+                        retry += 1
+                        pass
+                    except TimeoutError as e:
+                        dc = None
+                        break
+                    # end try
+
+                    if retry > 10:
+                        dc = None
+                        ok = True
+                    # end if
+                # end while
+
+                # Compute misfit with the base model
+                if dc:
+                    misfit = dc.misfit(base_dc)
+                else:
+                    misfit = np.nan
+                # end if
+
+                # Append
+                misfits[j, k, i] = misfit
+                progress_bar.update(1)
+            # end for
+        # end for
+    # end for
+
+    progress_bar.close()
+
+    # Average misfit per noise level
+    avg_misfits = np.mean(misfits, axis=-1)
+
+    # Cut values above 100
+    avg_misfits[avg_misfits > 100] = 100
+
+    # Plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=False)
+
+    # Plot average misfit per noise level with a hotmap
+    ax2.imshow(
+        avg_misfits,
+        aspect='auto',
+        cmap='hot',
+        interpolation='nearest',
+        extent=[0, z_noise, 0, vs_noise],
+        origin='lower',
+        vmin=0,
+        vmax=100
+    )
+
+    # Titles
+    ax1.set_title("Seismic Model")
+    ax2.set_title(f"Misfit vs Noise Level")
+
+    # Labels
+    ax2.set_xlabel("Z Noise Level")
+    ax2.set_ylabel("Vs Noise Level")
+
+    # Plot base model
+    base_model.plot(ax=ax1, invert_axes=False, title="Seismic Model", linewidth=4, color='black')
+
+    # ax2.legend()
+    plt.tight_layout()
+    plt.show()
+# end plot_2d_perturbations
+
+
+
+def run_perturbations(
+        vpvs,
+        vs,
+        z,
+        noise,
+        noise_samples,
+        noise_target: str,
+        n_samples,
+        length,
+        seed: int = 42
+):
+    """
+    Run the forward modeling process using either a saved model or priors from an ini file.
+    """
+    assert noise_target in ["vs", "z"], "noise_target must be either 'vs' or 'z'"
+
+    # Set seed
+    np.random.seed(seed)
+
+    # To numpy array
+    vs = np.array(vs)
+    z = np.array(z)
+
+    # Check if Vs and Z are the same length
+    if len(vs) != len(z):
+        raise click.UsageError("The number of Vs and Z values must be the same.")
+    # end if
+
+    # Log number of layers
+    console.print(f"[yellow]Number of layers: {vs.shape[0]}[/yellow]")
+
+    # List of model and dispersion curves
+    misfits = np.zeros((noise_samples, n_samples))
+
+    # Base model
+    base_model = SeismicModel(
+        model=np.concatenate((vs, z)),
+        vpvs=vpvs
+    )
+    base_dc = base_model.forward(length=length)
+
+    # For each noise level
+    for j, nl in enumerate(np.linspace(0, noise, noise_samples)):
+        print(f"[green]Noise level: {nl}[/green]")
+        # For each sample
+        for i in range(n_samples):
+            ok = False
+            retry = 0
+            while not ok:
+                # Put Vs and layers together
+                model = SeismicModel(
+                    model=np.concatenate(
+                        (
+                            vs + np.random.randn(vs.shape[0]) * (nl if noise_target == "vs" else 0.0),
+                            z + np.random.randn(z.shape[0]) * (nl if noise_target == "z" else 0.0)
+                        )
+                    ),
+                    vpvs=vpvs
+                )
+
+                # Forward modeling
+                try:
+                    dc = model.forward(length=length)
+                    ok = True
+                except TypeError as e:
+                    retry += 1
+                    pass
+                # end try
+
+                if retry > 10:
+                    console.print(f"[red]Failed to generate model after {retry} retries.[/red]")
+                    exit(1)
+                # end if
+            # end while
+
+            # Compute misfit with the base model
+            misfit = dc.misfit(base_dc)
+
+            # Append
+            misfits[j, i] = misfit
+        # end for
+    # end for
+
+    # Average misfit per noise level
+    avg_misfits = np.mean(misfits, axis=1)
+
+    # Plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=False)
+
+    # Plot average misfit per noise level
+    ax2.plot(
+        np.linspace(0, noise, noise_samples),
+        avg_misfits,
+        label="Average Misfit",
+        linestyle='-',
+        color='black',
+        linewidth=4
+    )
+
+    # Titles
+    ax1.set_title("Seismic Model")
+    ax2.set_title(f"Misfit vs Noise Level for {noise_target}")
+
+    # Plot base model
+    base_model.plot(ax=ax1, invert_axes=False, title="Seismic Model", linewidth=4, color='black')
+
+    # ax2.legend()
+    plt.tight_layout()
+    plt.show()
+# end run_perturbations
+
+
+@cli.command("plot-z-perturbations")
+@click.option("--vpvs", type=float, default=1.75, help="Vp/Vs ratio")
+@click.option("--vs", type=FLOAT_LIST, required=True, help="List of Vs values in Km/s (e.g., --vs 2.174 2.46)")
+@click.option("--z", type=FLOAT_LIST, required=True, help="List of Z values in Km (e.g., --z 1.24 10.91)")
+@click.option("--z-noise", type=float, default=0.1, help="Noise on Vs values")
+@click.option("--z-noise-samples", type=int, default=50, help="Number of samples to generate for Vs noise")
+@click.option("--n-samples", type=int, default=100, help="Number of samples to generate")
+@click.option("--length", type=int, default=60, help="Length of the dispersion curve")
+def plot_vs_perturbations(
+        vpvs,
+        vs,
+        z,
+        z_noise,
+        z_noise_samples,
+        n_samples,
+        length,
+        seed: int = 42
+):
+    """
+    Run the forward modeling process using either a saved model or priors from an ini file.
+
+    Args:
+        vpvs (float): Vp/Vs ratio
+        vs (tuple): Tuple of Vs values (velocity)
+        z (tuple): Tuple of depth values (depth)
+        z_noise (float): Noise on Vs values
+        z_noise_samples (int): Number of samples to generate for Vs noise
+        n_samples (int): Number of samples to generate
+        length (int): Length of the dispersion curve
+        seed (int): Random seed for reproducibility
+    """
+    run_perturbations(
+        vpvs=vpvs,
+        vs=vs,
+        z=z,
+        noise=z_noise,
+        noise_samples=z_noise_samples,
+        noise_target="z",
+        n_samples=n_samples,
+        length=length,
+        seed=seed
+    )
+# end run_forward_cli
+
+
+@cli.command("plot-vs-perturbations")
+@click.option("--vpvs", type=float, default=1.75, help="Vp/Vs ratio")
+@click.option("--vs", type=FLOAT_LIST, required=True, help="List of Vs values in Km/s (e.g., --vs 2.174 2.46)")
+@click.option("--z", type=FLOAT_LIST, required=True, help="List of Z values in Km (e.g., --z 1.24 10.91)")
+@click.option("--vs-noise", type=float, default=0.1, help="Noise on Vs values")
+@click.option("--vs-noise-samples", type=int, default=50, help="Number of samples to generate for Vs noise")
+@click.option("--n-samples", type=int, default=100, help="Number of samples to generate")
+@click.option("--length", type=int, default=60, help="Length of the dispersion curve")
+def plot_vs_perturbations(
+        vpvs,
+        vs,
+        z,
+        vs_noise,
+        vs_noise_samples,
+        n_samples,
+        length,
+        seed: int = 42
+):
+    """
+    Run the forward modeling process using either a saved model or priors from an ini file.
+
+    Args:
+        vpvs (float): Vp/Vs ratio
+        vs (tuple): Tuple of Vs values (velocity)
+        z (tuple): Tuple of depth values (depth)
+        vs_noise (float): Noise on Vs values
+        vs_noise_samples (int): Number of samples to generate for Vs noise
+        n_samples (int): Number of samples to generate
+        length (int): Length of the dispersion curve
+        seed (int): Random seed for reproducibility
+    """
+    run_perturbations(
+        vpvs=vpvs,
+        vs=vs,
+        z=z,
+        noise=vs_noise,
+        noise_samples=vs_noise_samples,
+        noise_target="vs",
+        n_samples=n_samples,
+        length=length,
+        seed=seed
+    )
+# end run_forward_cli
+
+
+@cli.command("noisy-forward")
+@click.option("--vpvs", type=float, default=1.75, help="Vp/Vs ratio")
+@click.option("--vs", type=FLOAT_LIST, required=True, help="List of Vs values in Km/s (e.g., --vs 2.174 2.46)")
+@click.option("--z", type=FLOAT_LIST, required=True, help="List of Z values in Km (e.g., --z 1.24 10.91)")
+@click.option("--vs-noise", type=float, default=0.1, help="Noise on Vs values")
+@click.option("--z-noise", type=float, default=0.1, help="Noise on Z values")
+@click.option("--n-samples", type=int, default=100, help="Number of samples to generate")
+@click.option("--length", type=int, default=60, help="Length of the dispersion curve")
+def run_forward_cli(
+        vpvs,
+        vs,
+        z,
+        vs_noise,
+        z_noise,
+        n_samples,
+        length,
+        seed: int = 42
+):
+    """
+    Run the forward modeling process using either a saved model or priors from an ini file.
+
+    Args:
+        vpvs (float): Vp/Vs ratio
+        vs (tuple): Tuple of Vs values (velocity)
+        z (tuple): Tuple of depth values (depth)
+        vs_noise (float): Noise on Vs values
+        z_noise (float): Noise on Z values
+        n_samples (int): Number of samples to generate
+        length (int): Length of the dispersion curve
+        seed (int): Random seed for reproducibility
+    """
+    # Set seed
+    np.random.seed(seed)
+
+    # To numpy array
+    vs = np.array(vs)
+    z = np.array(z)
+
+    # Check if Vs and Z are the same length
+    if len(vs) != len(z):
+        raise click.UsageError("The number of Vs and Z values must be the same.")
+    # end if
+
+    # Log number of layers
+    console.print(f"[yellow]Number of layers: {vs.shape[0]}[/yellow]")
+
+    # List of model and dispersion curves
+    models = []
+    dcs = []
+    misfits = np.zeros((n_samples,))
+
+    # Base model
+    model = SeismicModel(
+        model=np.concatenate((vs, z)),
+        vpvs=vpvs
+    )
+    dc = model.forward(length=length)
+
+    # Add
+    models.append(model)
+    dcs.append(dc)
+
+    # For each sample
+    for i in range(n_samples):
+        # Put Vs and layers together
+        model = SeismicModel(
+            model=np.concatenate(
+                (
+                    vs + np.random.randn(vs.shape[0]) * vs_noise,
+                    z + np.random.randn(z.shape[0]) * z_noise
+                )
+            ),
+            vpvs=vpvs
+        )
+
+        # Forward modeling
+        dc = model.forward(length=length)
+
+        # Compute misfit with the base model
+        misfit = dc.misfit(dcs[0])
+
+        # Append
+        models.append(model)
+        dcs.append(dc)
+        misfits[i] = misfit
+    # end for
+
+    # Plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=False)
+
+    # Generate a colormap excluding black (we use 'tab10' or 'viridis' for clarity)
+    cmap = cm.get_cmap('tab10')  # Or 'tab20', 'Set1', etc.
+    num_colors = len(models) - 2
+    colors = [cmap(i % cmap.N) for i in range(1, num_colors + 1)]  # Start from index 1 to skip black
+
+    # Plot all models
+    for i, (model, color) in enumerate(zip(models[2:], colors), start=1):
+        model.plot(ax=ax1, invert_axes=False, title="Seismic Model", linewidth=0.5, color=color, alpha=1)
+        dcs[i + 1].plot(ax=ax2, label=f"Dispersion {i + 1}", linestyle='-', color=color, linewidth=0.5, alpha=1)
+    # end for
+
+    # Plot base model
+    models[0].plot(ax=ax1, invert_axes=False, title="Seismic Model", linewidth=4, color='black')
+    dcs[0].plot(ax=ax2, label="Dispersion", linestyle='-', color='black', linewidth=4)
+
+    # Show average misfit in legend
+    avg_misfit = np.mean(misfits)
+    ax2.legend(title=f"Avg. Misfit: {avg_misfit:.2f}", loc='upper right')
+
+    # ax2.legend()
+    plt.tight_layout()
+    plt.show()
+# end run_forward_cli
+
+
+@cli.command("run-forward")
+@click.option("--vpvs", type=float, default=1.75, help="Vp/Vs ratio")
+@click.option("--vs", type=FLOAT_LIST, required=True, help="List of Vs values in Km/s (e.g., --vs 2.174 2.46)")
+@click.option("--z", type=FLOAT_LIST, required=True, help="List of Z values in Km (e.g., --z 1.24 10.91)")
+@click.option("--length", type=int, default=60, help="Length of the dispersion curve")
+@click.option("--plot-dispcurve/--no-plot-dispcurve", default=False, help="Plot the dispersion curve")
+@click.option("--plot-model/--no-plot-model", default=False, help="Plot the seismic model")
+@click.option("--curve-output", type=click.Path(), help="Optional path to save the dispersion curve")
+@click.option("--model-output", type=click.Path(), help="Optional path to save the seismic model")
+def run_forward_cli(
+        vpvs,
+        vs,
+        z,
+        length,
+        plot_dispcurve,
+        plot_model,
+        curve_output,
+        model_output
+):
+    """
+    Run the forward modeling process using either a saved model or priors from an ini file.
+
+    Args:
+        vpvs (float): Vp/Vs ratio
+        vs (tuple): Tuple of Vs values (velocity)
+        z (tuple): Tuple of depth values (depth)
+        length (int): Length of the dispersion curve
+        plot_dispcurve (bool): Whether to plot the dispersion curve
+        plot_model (bool): Whether to plot the seismic model
+        curve_output (str): Optional path to save the dispersion curve
+        model_output (str): Optional path to save the seismic model
+    """
+    # To numpy array
+    vs = np.array(vs)
+    z = np.array(z)
+
+    # Check if Vs and Z are the same length
+    if len(vs) != len(z):
+        raise click.UsageError("The number of Vs and Z values must be the same.")
+    # end if
+
+    # Log number of layers
+    console.print(f"[yellow]Number of layers: {vs.shape[0]}[/yellow]")
+
+    # Put Vs and layers together
+    model = SeismicModel(
+        model=np.concatenate((vs, z)),
+        vpvs=vpvs
+    )
+
+    # Show the model
+    console.print("Seismic Model:")
+    console.print(model)
+
+    # Forward modeling
+    dc = model.forward(length=length)
+
+    # Output
+    console.print("Dispersion Curve:")
+    console.print(dc)
+
+    # Plot
+    if plot_dispcurve or plot_model:
+        if plot_dispcurve and plot_model:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=False)
+            model.plot(ax=ax1, invert_axes=False, title="Seismic Model")
+            dc.plot(ax=ax2, label="Dispersion", linestyle='-', color='black')
+            ax2.legend()
+        elif plot_model:
+            model.plot(title="Seismic Model")
+        elif plot_dispcurve:
+            dc.plot()
+        # end if
+        plt.tight_layout()
+        plt.show()
+    # end if
+
+    if curve_output:
+        ext = os.path.splitext(curve_output)[1].lower()
+        if ext == ".json":
+            dc.save_json(curve_output)
+        elif ext in [".yaml", ".yml"]:
+            dc.save_yaml(curve_output)
+        elif ext in [".pkl", ".pickle"]:
+            dc.save_pickle(curve_output)
+        else:
+            raise click.UsageError(f"Unsupported output file extension: {ext}")
+        # end if
+        console.print(f"[green]Dispersion curve saved to {curve_output}[/green]")
+    # end if
+
+    if model_output:
+        ext = os.path.splitext(model_output)[1].lower()
+        if ext == ".json":
+            model.save_json(model_output)
+        elif ext in [".yaml", ".yml"]:
+            model.save_yaml(model_output)
+        elif ext in [".pkl", ".pickle"]:
+            model.save_pickle(model_output)
+        else:
+            raise click.UsageError(f"Unsupported output file extension: {ext}")
+        # end if
+        console.print(f"[green]Model saved to {model_output}[/green]")
+    # end if
+# end run_forward_cli
+
+
+
 @cli.command("generate-dataset")
-@click.option("--name", type=str, required=True, help="Name of the dataset")
-@click.option("--pretty-name", type=str, required=True, help="Pretty name of the dataset")
-@click.option("--description", type=str, required=True, help="Description of the dataset")
+@click.option("--name", type=str, required=False, help="Name of the dataset")
+@click.option("--pretty-name", type=str, required=False, help="Pretty name of the dataset")
+@click.option("--description", type=str, required=False, help="Description of the dataset")
 @click.option("--license-name", type=str, default="other", help="License name")
 @click.option("--created-by", type=str, default="Unknown", help="Name of the creator")
 @click.option("--ini-file", type=click.Path(exists=True), required=True, help="Path to .ini file with modelpriors and initparams")
@@ -168,10 +796,17 @@ def generate_dataset_cli(
             train_ratio=1 - test_ratio,
         )
         console.log(f"Generated folds.json in {output_dir}")
+        console.log(
+            "You can now upload the dataset on HuggingFace with: "
+            "`huggingface-cli upload MIGRATE/<dataset-name> <loca-path> . --repo-type dataset "
+            "--commit-message \"<commit-message>\" --private`"
+        )
     # end if
 
     # Save dataset info
     if write_dataset_info:
+        assert description is not None, "Description is required for dataset card generation."
+        assert name is not None, "Name is required for dataset card generation."
         save_dataset_info(
             output_dir=output_dir,
             dataset_name=name,
@@ -189,6 +824,9 @@ def generate_dataset_cli(
     # end if
 
     if write_dataset_card:
+        assert pretty_name is not None, "Pretty name is required for dataset card generation."
+        assert license_name is not None, "License name is required for dataset card generation."
+
         # Determine size category from HuggingFace convention
         if n_samples < 1_000:
             size_category = "n<1K"
@@ -232,11 +870,6 @@ def generate_dataset_cli(
     # # end if
 
     console.log("Dataset generation complete.")
-    console.log(
-        "You can now upload the dataset on HuggingFace with: "
-        "`huggingface-cli upload MIGRATE/<dataset-name> <loca-path> . --repo-type dataset "
-        "--commit-message \"<commit-message>\" --private`"
-    )
 # end generate_dataset
 
 
