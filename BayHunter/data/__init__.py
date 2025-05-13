@@ -5,7 +5,7 @@
 # Imports
 from .dataset import save_dataset_info, generate_folds_json
 from .model import SurfDispModel, SeismicModel, SeismicPrior, SeismicParams, SeismicSample
-from .sample import sample_model
+from .sample import sample_model, vornoi_to_layers
 from .validation import validate_model
 from .utils import save_samples_to_arrow
 from .huggingface import upload_dataset_to_hf
@@ -21,6 +21,7 @@ __all__ = [
     'SeismicPrior',
     'SeismicSample',
     'sample_model',
+    'vornoi_to_layers',
     'validate_model',
     'SeismicParams',
     'save_samples_to_arrow',

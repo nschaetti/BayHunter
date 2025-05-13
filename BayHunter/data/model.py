@@ -271,7 +271,7 @@ class DispersionCurve:
         :param velocity_type: 'group' or 'phase'
         :param source: 'simulated', 'observed', 'forwarded', etc.
         """
-        assert len(x) == len(y), "Period and velocity arrays must match in length."
+        assert len(x) == len(y), f"Period and velocity arrays must match in length ({len(x)} != {len(y)})"
         self.x = np.array(x)
         self.y = np.array(y)
         self.wave_type = wave_type
@@ -602,6 +602,11 @@ class SeismicModel(object):
             vs=vs,
             rho=rho
         )
+
+        # Check if NaN
+        if np.isnan(x).any() or np.isnan(y).any():
+            raise ValueError("NaN values in dispersion curve")
+        # end if
 
         # Create DispersionCurve object
         return DispersionCurve(
@@ -1035,19 +1040,23 @@ class SurfDispModel(object):
 
         # Call Fortran code
         error = surfdisp96(
-            h,
-            vp,
-            vs,
-            rho,
-            nlayer,
-            iflsph,
-            iwave,
-            mode,
-            igr,
-            kmax,
-            pers,
-            dispvel
+            h, # thkm
+            vp, # vpm
+            vs, # vsm
+            rho, # rhom
+            nlayer, # nlayer
+            iflsph, # iflsph
+            iwave, # iwave
+            mode, # mode
+            igr, # igr
+            kmax, # kmax
+            pers, # pers
+            dispvel, #  return
         )
+
+        # print(f"self._obsx = {self._obsx}")
+        # print(f"pers = {pers}")
+        # print(f"dispvel = {dispvel}")
 
         # No error
         if error == 0:

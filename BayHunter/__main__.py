@@ -22,6 +22,7 @@ from tqdm import tqdm
 # Imports BayHunter
 from BayHunter.data import SurfDispModel
 from BayHunter.data import SeismicPrior, sample_model, SeismicParams, SeismicModel, SeismicSample
+from BayHunter.data import vornoi_to_layers
 from BayHunter.data.huggingface import upload_dataset_to_hf, generate_dataset_card
 from BayHunter.data import save_dataset_info, generate_folds_json, validate_model
 
@@ -715,38 +716,23 @@ def generate_dataset_cli(
     """
     Generate synthetic seismic dataset (models + dispersion curves) and save in Arrow format.
 
-    :param name: Name of the dataset
-    :type name: str
-    :param pretty_name: Pretty name of the dataset
-    :type pretty_name: str
-    :param description: Description of the dataset
-    :type description: str
-    :param license_name: License name
-    :type license_name: str
-    :param created_by: Name of the creator
-    :type created_by: str
-    :param ini_file: Path to .ini file with modelpriors and initparams
-    :type ini_file: str
-    :param output_dir: Directory to save generated dataset
-    :type output_dir: str
-    :param n_samples: Total number of samples to generate
-    :type n_samples: int
-    :param samples_per_shard: Number of samples per shard file
-    :type samples_per_shard: int
-    :param length: Length of the dispersion curve
-    :type length: int
-    :param test_ratio: Test set ratio for 2-fold cross-validation
-    :type test_ratio: float
-    :param folds: List of k values for k-fold cross-validation (ex: 2,5,10)
-    :type folds: tuple
-    :param seed: Random seed for reproducibility
-    :type seed: int
-    :param write_dataset_info: Write JSON files
-    :type write_dataset_info: bool
-    :param write_folds: Write folds.json
-    :type write_folds: bool
-    :param write_dataset_card: Write dataset card
-    :type write_dataset_card: bool
+    Args:
+        name (str): Name of the dataset
+        pretty_name (str): Pretty name of the dataset
+        description (str): Description of the dataset
+        license_name (str): License name
+        created_by (str): Name of the creator
+        ini_file (str): Path to .ini file with modelpriors and initparams
+        output_dir (str): Directory to save generated dataset
+        n_samples (int): Total number of samples to generate
+        samples_per_shard (int): Number of samples per shard file
+        length (int): Length of the dispersion curve
+        test_ratio (float): Test set ratio for 2-fold cross-validation
+        folds (tuple): List of k values for k-fold cross-validation (ex: 2,5,10)
+        seed (int): Random seed for reproducibility
+        write_dataset_info (bool): Write JSON files
+        write_folds (bool): Write folds.json
+        write_dataset_card (bool): Write dataset card
     """
     # Set seed for reproducibility
     np.random.seed(seed)
@@ -773,11 +759,43 @@ def generate_dataset_cli(
     # Generate samples
     for shard_id in range(nshards):
         samples = []
-        for _ in range(samples_per_shard):
-            model = sample_model(prior, params, random_seed=np.random.randint(0, 2**32 - 1))
-            curve = model.forward(length=length)
+        for i in range(samples_per_shard):
+            curve = None
+
+            # Continue until the model is valid
+            while True:
+                # Sample a seismic model
+                model = sample_model(
+                    prior=prior,
+                    params=params,
+                    random_seed=np.random.randint(0, 2**32 - 1),
+                    sort_vs=False
+                )
+
+                try:
+                    # Forward simulation to generate dispersion curve
+                    curve = model.forward(length=length)
+                    break
+                except ValueError as e:
+                    continue
+                # end if
+            # end while
+
+            # Package the model and curve
             sample = SeismicSample(model, curve)
-            samples.append(sample.to_arrow_dict())
+            model_sample = sample.to_arrow_dict()
+
+            # Transform the model to layers profile
+            model_curve = vornoi_to_layers(
+                vs=np.array(sample.to_arrow_dict()['vs']),
+                z=np.array(sample.to_arrow_dict()['z']),
+                z_max=int(prior.z[1]),
+                n_points=60
+            )
+
+            # Add the model profile to the sample
+            model_sample['model_profile'] = model_curve
+            samples.append(model_sample)
         # end for
 
         # Convert to Arrow table

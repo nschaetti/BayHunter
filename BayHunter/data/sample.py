@@ -78,15 +78,17 @@ def sample_seismic_model(
         prior: SeismicPrior,
         params: SeismicParams,
         random_state: np.random.RandomState,
+        sort_vs: bool = True
 ):
     """
     Sample a seismic model.
 
-    :param vpvs: Vp/Vs ratio
-    :param prior: Prior distribution
-    :param params: Parameters for the model
-    :param random_state: Random state for reproducibility
-    :return: Sampled model as a SeismicModel object
+    Args:
+        vpvs (float): VpVs ratio
+        prior (SeismicPrior): Prior distribution
+        params (SeismicParams): Parameters for the model
+        random_state (np.random.RandomState): Random state for reproducibility
+        sort_vs (bool): Whether to sort layers or not
     """
     # Get min and max values for each parameter
     z_min, z_max = prior.z
@@ -98,7 +100,11 @@ def sample_seismic_model(
 
     # Sample Vs
     vs = random_state.uniform(low=vs_min, high=vs_max, size=n_layers)
-    vs = np.sort(vs)
+
+    # Sort the Vs
+    if sort_vs:
+        vs = np.sort(vs)
+    # end if
 
     # Mohoest ?
     if prior.mohoest is not None and n_layers > 1:
@@ -150,19 +156,85 @@ def sample_seismic_model(
 # end sample_seismic_model
 
 
+# Transform Vornoi Kernels to layers curve
+def vornoi_to_layers(
+        vs: np.ndarray,
+        z: np.ndarray,
+        z_max: int,
+        n_points: int
+):
+    """
+    Transform Voronoi kernels to a layered profile using NumPy.
+
+    Args:
+        vs (np.ndarray): S-wave velocities of each Voronoi kernel (1D).
+        z (np.ndarray): Depths (in m) of each Voronoi kernel (1D).
+        z_max (float): Maximum depth of the model.
+        n_points (int): Number of points in the final profile.
+
+    Returns:
+        tuple: (vs_profile, z_profile) both of shape (n_points,)
+    """
+    # Checks
+    assert vs.ndim == 1 and z.ndim == 1, "Inputs must be 1D arrays"
+    assert vs.shape[0] == z.shape[0], "vs and z must have same length"
+    assert np.all(z >= 0), "Depths must be non-negative"
+
+    # Remove zero-depth points (padding)
+    mask = z > 0
+    z = z[mask]
+    vs = vs[mask]
+
+    # Discontinuities (mid-depths between Voronoi zones)
+    mid_z = (z[:-1] + z[1:]) / 2
+
+    # Add surface (0 m)
+    mid_z = np.concatenate(([0.0], mid_z))
+
+    # Clip to z_max
+    mask = mid_z <= z_max
+    mid_z = mid_z[mask]
+    vs = vs[mask]
+
+    # Add z_max at the end if needed
+    if mid_z[-1] != z_max:
+        mid_z = np.concatenate((mid_z, [z_max]))
+        vs = np.concatenate((vs, [vs[-1]]))  # Extend with last velocity
+
+    # Compute vertical resolution
+    dz = z_max / n_points
+
+    # Output profiles
+    output_vs = np.zeros(n_points, dtype=np.float32)
+    output_z = np.zeros(n_points, dtype=np.float32)
+
+    # Fill in the layered model
+    for i in range(1, len(mid_z)):
+        start_idx = int(mid_z[i - 1] / dz)
+        end_idx = int(mid_z[i] / dz)
+        output_vs[start_idx:end_idx] = vs[i - 1]
+        output_z[start_idx:end_idx] = (np.arange(start_idx, end_idx) + 0.5) * dz
+    # end for
+
+    return output_vs, output_z
+# end vornoi_to_layers
+
+
 # Sample a model from the prior
 def sample_model(
         prior: SeismicPrior,
         params: SeismicParams,
-        random_seed: int = 42
+        random_seed: int = 42,
+        sort_vs: bool = True
 ) -> SeismicModel:
     """
     Sample a model from the prior.
 
-    :param prior: Prior distribution
-    :param params: Parameters for the model
-    :param random_seed: Random seed for reproducibility
-    :return: Sampled model as a SeismicModel object
+    Args:
+        prior (SeismicPrior): Prior distribution
+        params (SeismicParams): Parameters for the model
+        random_seed (int): Random seed for reproducibility
+        sort_vs (bool): Whether to sort layers or not
     """
     # Random state
     random_state = np.random.RandomState(random_seed)
@@ -175,7 +247,8 @@ def sample_model(
         vpvs=vpvs,
         prior=prior,
         params=params,
-        random_state=random_state
+        random_state=random_state,
+        sort_vs=sort_vs
     )
 
     return model
