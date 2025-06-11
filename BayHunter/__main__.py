@@ -818,7 +818,8 @@ def generate_dataset_cli(
             # Package the model and curve
             sample = SeismicSample(model, curve)
             model_sample = sample.to_arrow_dict()
-
+            print(sample)
+            exit()
             # Transform the model to layers profile
             model_curve = vornoi_to_layers(
                 vs=np.array(sample.to_arrow_dict()['vs']),
