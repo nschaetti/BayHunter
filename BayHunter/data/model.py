@@ -581,12 +581,16 @@ class SeismicModel(object):
     def forward(
             self,
             length: int = 60,
+            min_p: float = 1.0,
+            max_p: float = 15.0
     ):
         """
         Run the forward model.
 
-        :param length: Length of the dispersion curve.
-        :return: DispersionCurve object
+        Args:
+            length: Length of the dispersion curve (number of periods).
+            min_p: Minimum period in seconds.
+            max_p: Maximum period in seconds.
         """
         # Get model parameters
         vp, vs, h = self.get_vp_vs_h()
@@ -600,7 +604,9 @@ class SeismicModel(object):
             h=h,
             vp=vp,
             vs=vs,
-            rho=rho
+            rho=rho,
+            min_p=min_p,
+            max_p=max_p
         )
 
         # Check if NaN
@@ -729,23 +735,27 @@ class SeismicModel(object):
             h: np.ndarray,
             vp: np.ndarray,
             vs: np.ndarray,
-            rho: np.ndarray
+            rho: np.ndarray,
+            min_p: float = 1.0,
+            max_p: float = 15.0
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Calculate synthetic dispersion curves.
 
-        :param length: Length of the dispersion curve.
-        :param h: Layer thicknesses (km)
-        :param vp: P-wave velocities (km/s)
-        :param vs: S-wave velocities (km/s)
-        :param rho: Layer densities (g/cm³)
-        :return: Tuple of (period vector, dispersion velocities)
+        Args:
+            length: Length of the dispersion curve (number of periods).
+            h: Layer thicknesses.
+            vp: P-wave velocities.
+            vs: S-wave velocities.
+            rho: Densities.
+            min_p: Minimum period in seconds.
+            max_p: Maximum period in seconds.
         """
         # Create plugin object
         plugin = SurfDispModel(
             kmax=length,
-            min_p=1.0,
-            max_p=15.0
+            min_p=min_p,
+            max_p=max_p
         )
 
         # Call Fortran code

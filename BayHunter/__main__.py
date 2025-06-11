@@ -695,6 +695,10 @@ def run_forward_cli(
 @click.option("--write-dataset-info", is_eager=True, is_flag=True, help="Write JSON files")
 @click.option("--write-folds", is_eager=True, is_flag=True, help="Write folds.json")
 @click.option("--write-dataset-card", is_eager=True, is_flag=True, help="Write dataset card")
+@click.option("--variable-grid", is_eager=True, is_flag=True, help="Use variable grid for dispersion curves (default: False)")
+@click.option("--min-p", type=float, default=1.0, help="Minimum period for dispersion curves (default: 1.0)")
+@click.option("--max-p", type=float, default=15.0, help="Maximum period for dispersion curves (default: 15.0)")
+@click.option("--min-period-difference", type=float, default=10.0, help="Minimum period difference for dispersion curves (default: 10.0)")
 def generate_dataset_cli(
         name,
         pretty_name,
@@ -711,7 +715,11 @@ def generate_dataset_cli(
         seed,
         write_dataset_info: bool,
         write_folds: bool,
-        write_dataset_card: bool
+        write_dataset_card: bool,
+        variable_grid: bool = False,
+        min_p: float = 1.0,
+        max_p: float = 15.0,
+        min_period_difference: float = 10.0
 ):
     """
     Generate synthetic seismic dataset (models + dispersion curves) and save in Arrow format.
@@ -733,6 +741,10 @@ def generate_dataset_cli(
         write_dataset_info (bool): Write JSON files
         write_folds (bool): Write folds.json
         write_dataset_card (bool): Write dataset card
+        variable_grid (bool): Use variable grid for dispersion curves (default: False)
+        min_p (float): Minimum period for dispersion curves (default: 1.0)
+        max_p (float): Maximum period for dispersion curves (default: 15.0)
+        min_period_difference (float): Minimum period difference for dispersion curves (default: 10.0)
     """
     # Set seed for reproducibility
     np.random.seed(seed)
@@ -772,9 +784,31 @@ def generate_dataset_cli(
                     sort_vs=False
                 )
 
+                # Select a minimum period for the dispersion curve between min_p and (max_p - min_period_difference)
+                if variable_grid:
+                    # Select a random min. period
+                    min_period = np.random.uniform(min_p, max_p - min_period_difference)
+
+                    # Select a random range of periods between min_period_difference and (max_p - min_p)
+                    period_range = np.random.uniform(
+                        min_period_difference,
+                        max_p - min_period
+                    )
+
+                    # Max period is min_period + period_range
+                    max_period = min_period + period_range
+                else:
+                    min_period = min_p
+                    max_period = max_p
+                # end if
+
                 try:
                     # Forward simulation to generate dispersion curve
-                    curve = model.forward(length=length)
+                    curve = model.forward(
+                        length=length,
+                        min_p=min_period,
+                        max_p=max_period
+                    )
                     break
                 except ValueError as e:
                     continue
