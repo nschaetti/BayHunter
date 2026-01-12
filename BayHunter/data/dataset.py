@@ -1,6 +1,6 @@
-#
-# MIGRATE Project
-#
+"""
+Project MIGRATE dataset
+"""
 
 # Imports
 import os
@@ -31,33 +31,6 @@ def save_dataset_info(
 ):
     """
     Save dataset metadata information to dataset_info.json.
-
-    :param output_dir: Path where to save the file.
-    :type output_dir: Path
-    :param dataset_name: Name of the dataset.
-    :type dataset_name: str
-    :param dataset_description: Description of the dataset.
-    :type dataset_description: str
-    :param prior: SeismicPrior object used for generation.
-    :type prior: SeismicPrior
-    :param params: SeismicParams object used for generation.
-    :type params: SeismicParams
-    :param dispersion_length: Number of periods in the dispersion curve.
-    :type dispersion_length: int
-    :param n_samples: Total number of samples generated.
-    :type n_samples: int
-    :param samples_per_shard: Number of samples per shard file.
-    :type samples_per_shard: int
-    :param seed: Random seed used.
-    :type seed: int
-    :param ini_file: INI config file path used to generate the dataset.
-    :type ini_file: str
-    :param created_by: Name of the person or organization that created the dataset.
-    :type created_by: str
-    :param licence: License under which the dataset is released.
-    :type licence: str
-    :param folds_file: Path to the folds.json file (relative to output_dir).
-    :type folds_file: str
     """
     # How many shards files are needed?
     n_shards = int(n_samples // samples_per_shard)

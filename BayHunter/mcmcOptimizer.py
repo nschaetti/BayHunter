@@ -10,28 +10,24 @@ import os
 import time
 import os.path as op
 import numpy as np
-
-
-import matplotlib.pyplot as plt
 import multiprocessing as mp
 from multiprocessing import sharedctypes
-
-import matplotlib.cm as cm
-from collections import OrderedDict
+from rich.console import Console
 
 from BayHunter.utils import SerializingContext
-from BayHunter import Model, ModelMatrix
 from BayHunter import SingleChain
 from BayHunter import utils
-
 import logging
-logger = logging.getLogger()
+
+
+console = Console()
 
 
 class MCMC_Optimizer(object):
-    """
-    Contains multiple chains - parallel computing.
-    Check output files/ folder of forward modeling to not cause errors
+    """Manage and run multiple MCMC chains with shared-memory outputs.
+
+    This class initializes shared buffers, starts parallel chains, and
+    optionally streams progress to BayWatch for live monitoring.
     """
 
     def __init__(
@@ -60,6 +56,7 @@ class MCMC_Optimizer(object):
         savepath = op.join(self.initparams['savepath'], 'data')
         if not op.exists(savepath):
             os.makedirs(savepath)
+        # end if
 
         # Save configuration (targets, priors, params) for later use in plotting
         # save file for offline-plotting
@@ -84,13 +81,15 @@ class MCMC_Optimizer(object):
         self._init_shareddata()
 
         # Create all chains with their initial models and assigned targets
-        logger.info('> %d chain(s) are initiated ...' % self.nchains)
+        console.log('> %d chain(s) are initiated ...' % self.nchains)
         self.chains = []
         for i in np.arange(self.nchains):
             self.chains += [self._init_chain(chainidx=i, targets=targets)]
+        # end for
 
         # Create a multiprocessing manager for inter-process communication
         self.manager = mp.Manager()
+    # end def __init__
 
     def _init_shareddata(self):
         """Create a shared raw array.
@@ -98,7 +97,7 @@ class MCMC_Optimizer(object):
         All models / likes will be saved and load from this array.
         """
         memory = 0
-        logger.info('> Chain arrays are initiated...')
+        console.log('> Chain arrays are initiated...')
         dtype = np.float32
 
         acceptance = np.max(self.initparams['acceptance']) / 100.
@@ -142,14 +141,11 @@ class MCMC_Optimizer(object):
         memory += vpvsdata.nbytes
 
         memory = np.ceil(memory / 1e6)
-        logger.info('... they occupy ~%d MB memory.' % memory)
+        console.log('... they occupy ~%d MB memory.' % memory)
+    # end def _init_shareddata
 
     def _init_chain(self, chainidx, targets):
-        print(f"_init_chain")
-        print(f"chainidx = {chainidx}")
-        print(f"targets = {targets}")
-        print(f"self.priors = {self.priors}")
-        print(f"self.initparams = {self.initparams}")
+        """Create and return a SingleChain configured for this optimizer."""
         chain = SingleChain(
             targets=targets,
             chainidx=chainidx,
@@ -164,6 +160,7 @@ class MCMC_Optimizer(object):
         )
 
         return chain
+    # end def _init_chain
 
     def monitor_process(self, dtsend):
         """Create a socket and send array data. Only active for baywatch."""
@@ -173,7 +170,7 @@ class MCMC_Optimizer(object):
         self.socket.bind(self.sock_addr)
         dtype = np.float32
 
-        logger.info('Starting monitor process on %s...' % self.sock_addr)
+        console.log('Starting monitor process on %s...' % self.sock_addr)
 
         models = np.frombuffer(self.sharedmodels, dtype=dtype) \
             .reshape((self.nchains, self.nmodels, self.maxlayers*2))
@@ -185,35 +182,44 @@ class MCMC_Optimizer(object):
             .reshape((self.nchains, self.nmodels))
 
         def get_latest_row(models):
+            # Return the most recent model from each chain.
             nan_mask = ~np.isnan(models[:, :, 0])
             model_mask = np.argmax(np.cumsum(nan_mask, axis=1), axis=1)
             latest_models = [models[ic, model_mask[ic], :]
                              for ic in range(self.nchains)]
             return np.vstack(latest_models)
+        # end def get_latest_row
 
         def get_latest_likes(likes):
+            # Return the most recent likelihood from each chain.
             nan_mask = ~np.isnan(likes[:, :])
             like_mask = np.argmax(np.cumsum(nan_mask, axis=1), axis=1)
             latest_likes = [likes[ic, like_mask[ic]]
                             for ic in range(self.nchains)]
             return np.vstack(latest_likes)
+        # end def get_latest_likes
 
         def get_latest_noise(noise):
+            # Return the most recent noise parameters from each chain.
             nan_mask = ~np.isnan(models[:, :, 0])
             noise_mask = np.argmax(np.cumsum(nan_mask, axis=1), axis=1)
             latest_noise = [noise[ic, noise_mask[ic], :]
                             for ic in range(self.nchains)]
             return np.vstack(latest_noise)
+        # end def get_latest_noise
 
         def get_latest_vpvs(vpvs):
+            # Return the most recent vp/vs ratio from each chain.
             nan_mask = ~np.isnan(vpvs[:, :])
             vpvs_mask = np.argmax(np.cumsum(nan_mask, axis=1), axis=1)
             latest_vpvs = [vpvs[ic, vpvs_mask[ic]]
                            for ic in range(self.nchains)]
             return np.vstack(latest_vpvs)
+        # end def get_latest_vpvs
 
         while True:
-            logger.debug('Sending array...')
+            # Stream latest shared data to BayWatch.
+            console.log('Sending array...')
             latest_models = get_latest_row(models)
             latest_likes = get_latest_likes(likes)
             latest_noise = get_latest_noise(noise)
@@ -226,6 +232,8 @@ class MCMC_Optimizer(object):
             self.socket.send_array(latest_likes)
             self.socket.send_array(latest_noise)
             time.sleep(dtsend)
+        # end while
+    # end def monitor_process
 
     def mp_inversion(self, baywatch=False, dtsend=0.5, nthreads=0):
         """
@@ -245,7 +253,7 @@ class MCMC_Optimizer(object):
         def idxsort(chain):
             # Sorting function used to reorder chains after completion
             return chain.chainidx
-        # end idxsort
+        # end def idxsort
 
         def gochain(chainidx):
             # Function to run a single MCMC chain in a subprocess
@@ -260,7 +268,7 @@ class MCMC_Optimizer(object):
 
             # Store the completed chain in the shared manager list
             self.chainlist.append(chain)
-        # end gochain
+        # end def gochain
 
         # Determine number of threads (default: use all CPU cores)
         # multi processing - parallel chains
@@ -301,7 +309,7 @@ class MCMC_Optimizer(object):
             # end if
 
             chainidx = worklist.pop()
-            logger.info('> Sending out chain %s' % chainidx)
+            console.log('> Sending out chain %s' % chainidx)
             p = mp.Process(
                 name='chain %d' % chainidx,
                 target=gochain,
@@ -323,12 +331,15 @@ class MCMC_Optimizer(object):
                     # wait for BayWatch to recognize that inversion has finished
                     time.sleep(5*dtsend)
                     monitor.terminate()
+                # end if
                 break
+            # end if
             time.sleep(.5)
+        # end while
 
         p.join()
 
-        logger.info('> All chains terminated after: %.5f s' % (time.time() - t0))
+        console.log('> All chains terminated after: %.5f s' % (time.time() - t0))
 
         # Retrieve completed chains into self.chains (if memory allows)
         try:
@@ -343,4 +354,6 @@ class MCMC_Optimizer(object):
 
         # Report total runtime
         runtime = (time.time() - t0)
-        logger.info('### time for inversion: %.2f s' % runtime)
+        console.log('### time for inversion: %.2f s' % runtime)
+    # end def mp_inversion
+# end class MCMC_Optimizer

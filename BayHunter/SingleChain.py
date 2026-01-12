@@ -10,6 +10,7 @@ import copy
 import time
 import numpy as np
 import os.path as op
+from rich.console import Console
 
 from BayHunter import Model, ModelMatrix
 from BayHunter import utils
@@ -18,15 +19,20 @@ import logging
 logger = logging.getLogger()
 
 
+console = Console()
+
+
 PAR_MAP = {'vsmod': 0, 'zvmod': 1, 'birth': 2, 'death': 2,
            'noise': 3, 'vpvs': 4}
 
 
 class SingleChain(object):
+    """Run a single MCMC chain for a set of targets and priors."""
 
     def __init__(self, targets, chainidx=0, initparams={}, modelpriors={},
                  sharedmodels=None, sharedmisfits=None, sharedlikes=None,
                  sharednoise=None, sharedvpvs=None, random_seed=None):
+        """Configure chain state, shared buffers, and initial model values."""
         self.chainidx = chainidx
         self.rstate = np.random.RandomState(random_seed)
 
@@ -69,7 +75,10 @@ class SingleChain(object):
 
         # init model and values
         self._init_model_and_currentvalues()
-    # end __init__
+
+        # Print init
+        console.log(f"Chain {self.chainidx} initialized")
+    # end def __init__
 
 # init model and misfit / likelihood
 
@@ -101,9 +110,10 @@ class SingleChain(object):
         self.n = 0  # accepted models counter
         self.accept_as_currentmodel(imodel, inoise, ivpvs)
         self.append_currentmodel()
-    # end _init_model_and_currentvalues
+    # end def _init_model_and_currentvalues
 
     def draw_initmodel(self):
+        """Draw an initial model consistent with priors and constraints."""
         keys = self.priors.keys()
         zmin, zmax = self.priors['z']
         vsmin, vsmax = self.priors['vs']
@@ -124,19 +134,20 @@ class SingleChain(object):
                 z_vnoi = np.concatenate((
                     tmp_z_vnoi,
                     self.rstate.uniform(low=zmin, high=zmax, size=(layers - 2))))
+            # end if
 
         else:  # no moho estimate
             z_vnoi = self.rstate.uniform(low=zmin, high=zmax, size=layers)
+        # end if
 
         z_vnoi.sort()
         model = np.concatenate((vs, z_vnoi))
         return(model if self._validmodel(model)
                else self.draw_initmodel())
+    # end def draw_initmodel
 
     def draw_initnoiseparams(self):
-        """
-        :return:
-        """
+        """Draw initial noise hyper-parameters and identify fixed entries."""
         # For each target the noiseparams are (corr and sigma)
         noiserefs = ['noise_corr', 'noise_sigma']
         init_noise = np.ones(len(self.targets.targets)*2) * np.nan
@@ -156,6 +167,8 @@ class SingleChain(object):
                 # end if
 
                 self.noisepriors.append(noiseprior)
+            # end for
+        # end for
 
         self.noiseinds = np.where(corrfix == 0)[0]
         if len(self.noiseinds) == 0:
@@ -163,16 +176,20 @@ class SingleChain(object):
         # end if
 
         return init_noise, corrfix
-    # end draw_initnoiseparams
+    # end def draw_initnoiseparams
 
     def draw_initvpvs(self):
+        """Draw an initial vp/vs ratio from the prior."""
         if type(self.priors['vpvs']) == float:
             return self.priors['vpvs']
+        # end if
 
         vpvsmin, vpvsmax = self.priors['vpvs']
         return self.rstate.uniform(low=vpvsmin, high=vpvsmax)
+    # end def draw_initvpvs
 
     def set_target_covariance(self, corrfix, noise_corr, rcond=None):
+        """Assign covariance functions based on noise priors."""
         # SWD noise hyper-parameters: if corr is not 0, the correlation of data
         # points assumed will be exponential.
         # RF noise hyper-parameters: if corr is not 0, but fixed, the
@@ -190,6 +207,7 @@ class SingleChain(object):
                 # exponential for each target
                 target.get_covariance = target.valuation.get_covariance_exp
                 continue
+            # end if
 
             if (target_noise_corr == 0 and np.any(np.isnan(target.obsdata.yerr))):
                 # diagonal for each target, corr inrelevant for likelihood, rel error
@@ -200,6 +218,7 @@ class SingleChain(object):
                 # diagonal for each target, corr inrelevant for likelihood
                 target.get_covariance = target.valuation.get_covariance_nocorr_scalederr
                 continue
+            # end if
 
             # gauss for RF
             if target.noiseref == 'rf':
@@ -216,13 +235,16 @@ class SingleChain(object):
                 message = 'The noise correlation automatically defaults to the \
 exponential law. Explicitly state a noise reference for your user target \
 (target.noiseref) if wished differently.'
-                logger.info(message)
+                console.log(message)
                 target.noiseref == 'swd'
                 target.get_covariance = target.valuation.get_covariance_exp
+            # end if
+        # end for
+    # end def set_target_covariance
 
     def _init_chainarrays(self, sharedmodels, sharedmisfits, sharedlikes,
                           sharednoise, sharedvpvs):
-        """from shared arrays"""
+        """Bind per-chain views into shared memory arrays."""
         ntargets = self.targets.ntargets
         chainidx = self.chainidx
         nchains = self.nchains
@@ -255,10 +277,9 @@ exponential law. Explicitly state a noise reference for your user target \
             self.nmodels, ntargets*2)
         self.chainvpvs = vpvs[chainidx]
         self.chainiter = np.ones(self.chainlikes.size) * np.nan
+    # end def _init_chainarrays
 
-
-# update current model (change layer number and values)
-
+    # update current model (change layer number and values)
     def _model_layerbirth(self, model):
         """
         Draw a random voronoi nucleus depth from z and assign a new Vs.
@@ -280,6 +301,7 @@ exponential law. Explicitly state a noise reference for your user target \
         vs_new = np.concatenate((vs_vnoi, [vs_birth]))
         self.dvs2 = np.square(vs_birth - vs_before)
         return np.concatenate((vs_new, z_new))
+    # end def _model_layerbirth
 
     def _model_layerdeath(self, model):
         """
@@ -298,6 +320,7 @@ exponential law. Explicitly state a noise reference for your user target \
         vs_after = vs_new[ind]
         self.dvs2 = np.square(vs_after - vs_before)
         return np.concatenate((vs_new, z_new))
+    # end def _model_layerdeath
 
     def _model_vschange(self, model):
         """Randomly chose a layer to change Vs with Gauss distribution."""
@@ -305,6 +328,7 @@ exponential law. Explicitly state a noise reference for your user target \
         vs_mod = self.rstate.normal(0, self.propdist[0])
         model[ind] = model[ind] + vs_mod
         return model
+    # end def _model_vschange
 
     def _model_zvnoi_move(self, model):
         """Randomly chose a layer to change z_vnoi with Gauss distribution."""
@@ -312,8 +336,10 @@ exponential law. Explicitly state a noise reference for your user target \
         z_mod = self.rstate.normal(0, self.propdist[1])
         model[ind] = model[ind] + z_mod
         return model
+    # end def _model_zvnoi_move
 
     def _get_modelproposal(self, modify):
+        """Return a proposal model for the requested modification type."""
         model = copy.copy(self.currentmodel)
 
         if modify == 'vsmod':
@@ -324,8 +350,10 @@ exponential law. Explicitly state a noise reference for your user target \
             propmodel = self._model_layerbirth(model)
         elif modify == 'death':
             propmodel = self._model_layerdeath(model)
+        # end if
 
         return self._sort_modelproposal(propmodel)
+    # end def _get_modelproposal
 
     def _sort_modelproposal(self, model):
         """
@@ -340,7 +368,9 @@ exponential law. Explicitly state a noise reference for your user target \
         else:
             ind = np.argsort(z_vnoi)
             model_sort = np.concatenate((vs[ind], z_vnoi[ind]))
+        # end if
         return model_sort
+    # end def _sort_modelproposal
 
     def _validmodel(self, model):
         """
@@ -362,12 +392,14 @@ exponential law. Explicitly state a noise reference for your user target \
             logger.debug("chain%d: model- nlayers not in prior"
                          % self.chainidx)
             return False
+        # end if
 
         # check model for layers with thicknesses of smaller thickmin
         if np.any(h[:-1] < self.thickmin):
             logger.debug("chain%d: thicknesses are not larger than thickmin"
                          % self.chainidx)
             return False
+        # end if
 
         # check whether vs lies within the prior
         vsmin = self.priors['vs'][0]
@@ -376,6 +408,7 @@ exponential law. Explicitly state a noise reference for your user target \
             logger.debug("chain%d: model- vs not in prior"
                          % self.chainidx)
             return False
+        # end if
 
         # check whether interfaces lie within prior
         zmin = self.priors['z'][0]
@@ -385,6 +418,7 @@ exponential law. Explicitly state a noise reference for your user target \
             logger.debug("chain%d: model- z not in prior"
                          % self.chainidx)
             return False
+        # end if
 
         if self.lowvelperc is not None:
             # check model for low velocity zones. If larger than perc, then
@@ -394,6 +428,8 @@ exponential law. Explicitly state a noise reference for your user target \
                 logger.debug("chain%d: low velocity zone issues"
                              % self.chainidx)
                 return False
+            # end if
+        # end if
 
         if self.highvelperc is not None:
             # check model for high velocity zones. If larger than perc, then
@@ -403,36 +439,50 @@ exponential law. Explicitly state a noise reference for your user target \
                 logger.debug("chain%d: high velocity zone issues"
                              % self.chainidx)
                 return False
+            # end if
+        # end if
 
         return True
+    # end def _validmodel
 
     def _get_hyperparameter_proposal(self):
+        """Propose a new noise hyper-parameter value."""
         noise = copy.copy(self.currentnoise)
         ind = self.rstate.choice(self.noiseinds)
 
         noise_mod = self.rstate.normal(0, self.propdist[3])
         noise[ind] = noise[ind] + noise_mod
         return noise
+    # end def _get_hyperparameter_proposal
 
     def _validnoise(self, noise):
+        """Validate that proposed noise values respect priors."""
         for idx in self.noiseinds:
             if noise[idx] < self.noisepriors[idx][0] or \
                     noise[idx] > self.noisepriors[idx][1]:
                 return False
+            # end if
+        # end for
         return True
+    # end def _validnoise
 
     def _get_vpvs_proposal(self):
+        """Propose a new vp/vs value."""
         vpvs = copy.copy(self.currentvpvs)
         vpvs_mod = self.rstate.normal(0, self.propdist[4])
         vpvs = vpvs + vpvs_mod
         return vpvs
+    # end def _get_vpvs_proposal
 
     def _validvpvs(self, vpvs):
+        """Validate vp/vs proposal when a range prior is used."""
         # only works if vpvs-priors is a range
         if vpvs < self.priors['vpvs'][0] or \
                 vpvs > self.priors['vpvs'][1]:
             return False
+        # end if
         return True
+    # end def _validvpvs
 
 
     # accept / save current modelst
@@ -443,6 +493,7 @@ exponential law. Explicitly state a noise reference for your user target \
         """
         with np.errstate(invalid='ignore'):
             acceptrate = self.accepted / self.proposed * 100
+        # end with
 
         # minimum distribution width forced to be not less than 1 m/s, 1 m
         # actually only touched by vs distribution
@@ -452,16 +503,21 @@ exponential law. Explicitly state a noise reference for your user target \
             if np.isnan(rate):
                 # only if not inverted for
                 continue
+            # end if
             if rate < self.acceptance[0]:
                 new = self.propdist[i] * 0.95
                 if new < propdistmin[i]:
                     new = propdistmin[i]
+                # end if
                 self.propdist[i] = new
 
             elif rate > self.acceptance[1]:
                 self.propdist[i] = self.propdist[i] * 1.05
             else:
                 pass
+            # end if
+        # end for
+    # end def adjust_propdist
 
     def get_acceptance_probability(self, modify):
         """
@@ -497,8 +553,10 @@ exponential law. Explicitly state a noise reference for your user target \
             C = self.targets.proposallikelihood - self.currentlikelihood
 
             alpha = np.log(A) - B + C
+        # end if
 
         return alpha
+    # end def get_acceptance_probability
 
     def accept_as_currentmodel(self, model, noise, vpvs):
         """Assign currentmodel and currentvalues to self."""
@@ -508,6 +566,7 @@ exponential law. Explicitly state a noise reference for your user target \
         self.currentnoise = noise
         self.currentvpvs = vpvs
         self.lastmoditer = self.iiter
+    # end def accept_as_currentmodel
 
     def append_currentmodel(self):
         """Append currentmodel to chainmodels and values."""
@@ -519,8 +578,10 @@ exponential law. Explicitly state a noise reference for your user target \
 
         self.chainiter[self.n] = self.iiter
         self.n += 1
+    # end def append_currentmodel
 
     def iterate(self):
+        """Perform a single iteration of the MCMC chain."""
         if self.iiter < (-self.iter_phase1 + (self.iterations * 0.01)):
             # only allow vs and z modifications the first 1 % of iterations
             modify = self.rstate.choice(['vsmod', 'zvmod'] + self.noisemods + self.vpvsmods)
@@ -581,6 +642,7 @@ exponential law. Explicitly state a noise reference for your user target \
             self.accept_as_currentmodel(proposalmodel, proposalnoise, proposalvpvs)
             self.append_currentmodel()
             self.accepted[paridx] += 1
+        # end if
 
         # print inversion status information
         if self.iiter % 5000 == 0:
@@ -590,24 +652,30 @@ exponential law. Explicitly state a noise reference for your user target \
             if current_iterations > 0:
                 acceptrate = float(self.n) / current_iterations * 100.
 
-                logger.info('%6d %5d + hs %8.3f\t%9d |%6.1f s  | %.1f ' % (
+                console.log('%6d %5d + hs %8.3f\t%9d |%6.1f s  | %.1f ' % (
                     self.lastmoditer, self.currentmodel.size/2 - 1,
                     self.currentmisfits[-1], self.currentlikelihood,
                     runtime, acceptrate) + r'%')
+            # end if
 
             self.tnull = time.time()
+        # end if
 
         # stabilize model acceptance rate
         if self.iiter % 1000 == 0:
             if np.all(self.proposed) != 0:
                 self.adjust_propdist()
+            # end if
+        # end if
 
         self.iiter += 1
+    # end def iterate
 
     def run_chain(self):
         """
         Run the MCMC process for a single chain.
         """
+        console.log(f"Run chain {self.chainidx}")
         # Time before inversion
         t0 = time.time()
         self.tnull = time.time()
@@ -623,6 +691,9 @@ exponential law. Explicitly state a noise reference for your user target \
 
         # Burning phase
         while self.iiter < self.iter_phase2:
+            # if self.iiter % 1000 == 0:
+            #     print(f"Iteration {self.iiter} for chain {self.chainidx}")
+            # end if
             self.iterate()
         # end while
 
@@ -670,7 +741,7 @@ exponential law. Explicitly state a noise reference for your user target \
         self.save_finalmodels()
 
         logger.debug('time for inversion: %.2f s' % runtime)
-    # end run_chain
+    # end def run_chain
 
     def get_weightedvalues(self, pind, finaliter):
         """
@@ -690,6 +761,7 @@ exponential law. Explicitly state a noise reference for your user target \
             pweights, models=pmodels, likes=plikes, misfits=pmisfits,
             noiseparams=pnoise, vpvs=pvpvs)
         return wmodels, wlikes, wmisfits, wnoise, wvpvs
+    # end def get_weightedvalues
 
     def save_finalmodels(self):
         """Save chainmodels as pkl file"""
@@ -703,8 +775,9 @@ exponential law. Explicitly state a noise reference for your user target \
                                      self.p1vpvs]):
                 outfile = op.join(savepath, 'c%.3d_p1%s' % (self.chainidx, names[i]))
                 np.save(outfile, data[::self.thinning])
+            # end for
         except:
-            logger.info('No burnin models accepted.')
+            console.log('No burnin models accepted.')
 
         # phase 2 -- main / posterior phase
         try:
@@ -713,7 +786,11 @@ exponential law. Explicitly state a noise reference for your user target \
                                      self.p2vpvs]):
                 outfile = op.join(savepath, 'c%.3d_p2%s' % (self.chainidx, names[i]))
                 np.save(outfile, data[::self.thinning])
+            # end for
 
-            logger.info('> Saving %d models (main phase).' % len(data[::self.thinning]))
+            console.log('> Saving %d models (main phase).' % len(data[::self.thinning]))
         except:
-            logger.info('No main phase models accepted.')
+            console.log('No main phase models accepted.')
+    # end def save_finalmodels
+
+# end class SingleChain

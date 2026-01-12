@@ -803,7 +803,7 @@ def generate_dataset_cli(
                 # end if
 
                 try:
-                    # Forward simulation to generate dispersion curve
+                    # Forward simulation to generate a dispersion curve
                     curve = model.forward(
                         length=length,
                         min_p=min_period,
