@@ -7,7 +7,8 @@
 # #############################
 
 import numpy as np
-from BayHunter.surfdisp96_ext import surfdisp96
+# from BayHunter.surfdisp96_ext import surfdisp96
+from BayHunter.extensions.surfdisp96_ext import surfdisp96
 
 
 class SurfDisp(object):

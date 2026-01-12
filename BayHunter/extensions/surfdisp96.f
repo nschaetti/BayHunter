@@ -107,7 +107,7 @@ c     save current values
             a(i) = vpm(i)
             d(i) = thkm(i)
             rho(i) = rhom(i)
-c           print *,d(i), b(i)
+c           
    39   continue       
         
         if(iwave.eq.1)then
@@ -154,7 +154,7 @@ c-----
         endif
         if(b(i).gt.betmx) betmx=b(i)
    20 continue
-cc      WRITE(6,*)'betmn, betmx:',betmn, betmx
+c
 c        if(idispl.gt.0)then
 cc            open(1,file='tmpsrfi.06',form='unformatted',
 cc     1          access='sequential')
@@ -591,7 +591,7 @@ c-----
 c     make sure new estimate is inside the previous values. If not
 c     perform interval halving
 c-----
-        if(c3 .lt. dmin1(c1,c2) .or. c3. gt.dmax1(c1,c2))then
+        if(c3 .lt. dmin1(c1,c2) .or. c3 .gt. dmax1(c1,c2))then
             nev = 0
             call half(c1,c2,c3,del3,omega,ifunc,d,a,b,rho,rtp,dtp,btp,
      &  mmax,llw,twopi,a0,cpcq,cpy,cpz,cqw,cqx,xy,xz,wy,wz)
@@ -695,6 +695,7 @@ c
         parameter(NL=100)
         real*4 d(NL),a(NL),b(NL),rho(NL),rtp(NL),dtp(NL),btp(NL)        
 c
+c
         if(kk.eq.1)then
 c   love wave period equation
           dltar = dltar1(wvno,omega,d,a,b,rho,rtp,dtp,btp,mmax,llw,twopi)
@@ -703,6 +704,7 @@ c   rayleigh wave period equation
           dltar = dltar4(wvno,omega,d,a,b,rho,rtp,dtp,btp,mmax,llw,twopi)
 c     &  a0,cpcq,cpy,cpz,cqw,cqx,xy,xz,wy,wz)
         endif
+c
         end
 c
 c - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -720,6 +722,8 @@ c
 c   Haskell-Thompson love wave formulation from halfspace
 c   to surface.
 c
+c
+        
         beta1=dble(b(mmax))
         rho1=dble(rho(mmax))
         xkb=omega/beta1
@@ -729,6 +733,8 @@ c
         e1=rho1*rb
         e2=1.d+00/(beta1*beta1)
         mmm1 = mmax - 1
+        
+c
         do 600 m=mmm1,llw,-1
           beta1=dble(b(m))
           rho1=dble(rho(m))
@@ -765,6 +771,7 @@ c
           e2=e20/xnor
   600 continue
         dltar1=e1
+c
         return
         end
 c
