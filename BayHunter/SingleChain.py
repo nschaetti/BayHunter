@@ -16,6 +16,9 @@ from BayHunter import Model, ModelMatrix
 from BayHunter import utils
 
 import logging
+
+from BayHunter.surf96_modsw import SurfDisp
+
 logger = logging.getLogger()
 
 
@@ -44,6 +47,8 @@ class SingleChain(object):
 
         self.nchains = self.initparams['nchains']
         self.station = self.initparams['station']
+
+        self.n_simulations = 0
 
         # set targets and inversion specific parameters
         self.targets = targets
@@ -142,8 +147,9 @@ class SingleChain(object):
 
         z_vnoi.sort()
         model = np.concatenate((vs, z_vnoi))
-        return(model if self._validmodel(model)
-               else self.draw_initmodel())
+        return(
+            model if self._validmodel(model) else self.draw_initmodel()
+        )
     # end def draw_initmodel
 
     def draw_initnoiseparams(self):
@@ -738,6 +744,20 @@ exponential law. Explicitly state a noise reference for your user target \
         accmodels = float(self.p2likes.size)  # accepted models in p2 phase
         maxmodels = float(self.initparams['maxmodels'])  # for saving
         self.thinning = int(np.ceil(accmodels / maxmodels))
+
+        # for p in ["p1", "p2"]:
+        #     console.log(f"{p}:")
+        #     for v in ["models", "likes", "misfits", "noise", "vpvs"]:
+        #         console.log(f"\nself.{p}{v}: {getattr(self, f'{p}{v}').shape}")
+        #     # end for
+        # # end for
+        #
+        # print(f"p1models: {self.p1models[0]}")
+        # print(f"p1misfits: {self.p1misfits[0]}")
+        # print(f"p1noise: {self.p1noise[0]}")
+
+        self.n_simulations = SurfDisp.RUN_COUNTER
+
         self.save_finalmodels()
 
         logger.debug('time for inversion: %.2f s' % runtime)
@@ -764,33 +784,43 @@ exponential law. Explicitly state a noise reference for your user target \
     # end def get_weightedvalues
 
     def save_finalmodels(self):
-        """Save chainmodels as pkl file"""
+        """Persist weighted chain results for burn-in and main phases.
+
+        The weighted model parameters, likelihoods, misfits, noise values,
+        and vp/vs ratios are thinned according to ``self.thinning`` and saved as
+        ``.npy`` files below ``<savepath>/data``. Files follow the pattern
+        ``c<chainidx>_<phase><name>`` (e.g. ``c000_p2models``), where ``phase``
+        is ``p1`` for burn-in and ``p2`` for the main phase.
+        """
         savepath = op.join(self.initparams['savepath'], 'data')
-        names = ['models', 'likes', 'misfits', 'noise', 'vpvs']
+        dataset_names = ('models', 'likes', 'misfits', 'noise', 'vpvs')
+        phases = (
+            ('p1', 'burnin'),
+            ('p2', 'main phase'),
+        )
+        thinning = max(1, self.thinning)
 
-        # phase 1 -- burnin
-        try:
-            for i, data in enumerate([self.p1models, self.p1likes,
-                                     self.p1misfits, self.p1noise,
-                                     self.p1vpvs]):
-                outfile = op.join(savepath, 'c%.3d_p1%s' % (self.chainidx, names[i]))
-                np.save(outfile, data[::self.thinning])
-            # end for
-        except:
-            console.log('No burnin models accepted.')
+        for phase_prefix, phase_label in phases:
+            phase_datasets = [
+                getattr(self, f'{phase_prefix}{name}', None)
+                for name in dataset_names
+            ]
+            available = [
+                (name, data) for name, data in zip(dataset_names, phase_datasets)
+                if data is not None and len(data) > 0
+            ]
 
-        # phase 2 -- main / posterior phase
-        try:
-            for i, data in enumerate([self.p2models, self.p2likes,
-                                     self.p2misfits, self.p2noise,
-                                     self.p2vpvs]):
-                outfile = op.join(savepath, 'c%.3d_p2%s' % (self.chainidx, names[i]))
-                np.save(outfile, data[::self.thinning])
-            # end for
+            if not available:
+                console.log(f'No {phase_label} models accepted.')
+                continue
 
-            console.log('> Saving %d models (main phase).' % len(data[::self.thinning]))
-        except:
-            console.log('No main phase models accepted.')
+            for name, data in available:
+                outfile = op.join(savepath, f'c{self.chainidx:03d}_{phase_prefix}{name}')
+                np.save(outfile, data[::thinning])
+
+            if phase_prefix == 'p2':
+                saved_models = len(available[0][1][::thinning])
+                console.log(f'> Saving {saved_models} models (main phase).')
     # end def save_finalmodels
 
 # end class SingleChain

@@ -9,13 +9,16 @@
 import os
 import glob
 import logging
+from pathlib import Path
+from typing import Optional
+
 import numpy as np
 import os.path as op
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 from collections import OrderedDict
 
-from BayHunter import utils
+from BayHunter import utils, MCMC_Optimizer
 from BayHunter import Targets
 from BayHunter import Model, ModelMatrix
 import matplotlib.colors as colors
@@ -27,12 +30,31 @@ rstate = np.random.RandomState(333)
 
 
 def vs_round(vs):
+    """Round Vs values down to the nearest 0.025 km/s increment.
+
+    Args:
+        vs (float or numpy.ndarray): Shear-wave velocity values to round.
+
+    Returns:
+        numpy.ndarray: Rounded shear-wave velocities.
+    """
     # rounding down to next smaller 0.025 interval
     vs_floor = np.floor(vs)
     return np.round((vs-vs_floor)*40)/40 + vs_floor
 
 
+# end def vs_round
 def tryexcept(func):
+    """Wrap a plotting function with a broad try/except handler.
+
+    Args:
+        func (Callable): Plotting callable to wrap.
+
+    Returns:
+        Callable: Wrapped function that prints an informative message when an
+            exception is raised and returns ``None`` instead of propagating the
+            error.
+    """
     def wrapper_tryexcept(*args, **kwargs):
         try:
             output = func(*args, **kwargs)
@@ -41,16 +63,83 @@ def tryexcept(func):
             print('* %s: Plotting was not possible\nErrorMessage: %s'
                   % (func.__name__, e))
             return None
+    # end def wrapper_tryexcept
     return wrapper_tryexcept
+# end def tryexcept
+
+
+class PlotFromChains(object):
+    """Plot posterior samples from terminated chains."""
+
+    def __init__(
+            self,
+            initparams: dict,
+            optimizer: MCMC_Optimizer
+    ):
+        """
+        Plot previously generated chain outputs stored in the optimizer.
+        """
+        self.initparams = initparams
+        self.n_simulations = initparams['iter_burnin'] + initparams['iter_main']
+        self.optimizer = optimizer
+        self.chains_misfits = None
+        self._load_chain_data()
+    # end def __init__
+
+    def _load_chain_data(self):
+        """
+        Load chain data from the optimizer.
+        """
+        all_misfits = list()
+        for c in self.optimizer.chains:
+            chain_misfits = np.concat([c.p1misfits, c.p2misfits], axis=0)
+            print(chain_misfits.shape)
+            self.chains_misfits = all_misfits.append(chain_misfits.reshape(1, -1))
+        # end for
+        # self.chains_misfits = np.array(all_misfits)
+        # print(self.chains_misfits.shape)
+    # end def _load_chain_data
+
+    # end def _load_chain_data
+    def save_final_distribution(self, maxmodels, dev):
+        pass
+    # end def save_final_distribution
+
+    def save_plots(self):
+        pass
+    # end def save_plots
+
+    def merge_pdfs(self):
+        pass
+    # end def merge_pdfs
+
+# end class PlotFromChains
 
 
 class PlotFromStorage(object):
-    """
-    Plot and Save from storage (files).
-    No chain object is necessary.
+    """Plot previously generated chain outputs stored on disk.
 
+    The helper reads the inversion configuration, loads accepted chain values,
+    and offers a catalogue of plotting utilities without requiring a running
+    ``SingleChain`` instance.
+
+    Attributes:
+        targets (Targets): Target collection loaded from the configuration.
+        priors (dict): Prior bounds applied in the inversion.
+        initparams (dict): Inversion control parameters.
+        datapath (str): Directory containing ``c???_p?.npy`` files to plot.
+        figpath (str): Output directory for generated figures.
     """
-    def __init__(self, configfile):
+    def __init__(
+            self,
+            configfile
+    ):
+        """Load configuration metadata and locate stored chain artifacts.
+
+        Args:
+            configfile (str): Path to a configuration file that references the
+                ``c???_p?.npy`` files to visualize.
+        """
         condict = self.read_config(configfile)
         self.targets = condict['targets']
         self.ntargets = len(self.targets)
@@ -59,29 +148,54 @@ class PlotFromStorage(object):
         self.initparams = condict['initparams']
 
         self.datapath = op.dirname(configfile)
-        self.figpath = self.datapath.replace('data', '')
-        print('Current data path: %s' % self.datapath)
+        self.figpath = str(Path(self.datapath).parent)
 
         self.init_filelists()
         self.init_outlierlist()
 
         self.mantle = self.priors.get('mantle', None)
 
-        self.refmodel = {'model': None,
-                         'nlays': None,
-                         'noise': None,
-                         'vpvs': None}
+        self.refmodel = {
+            'model': None,
+            'nlays': None,
+            'noise': None,
+            'vpvs': None
+        }
+    # end def __init__
 
     def read_config(self, configfile):
+        """Read the BayHunter configuration file.
+
+        Args:
+            configfile (str): Path to the configuration file.
+
+        Returns:
+            dict: Parsed configuration dictionary matching
+            :func:`BayHunter.utils.read_config`.
+        """
         return utils.read_config(configfile)
+    # end def read_config
 
     def savefig(self, fig, filename):
+        """Persist a figure if it is not ``None``.
+
+        Args:
+            fig (matplotlib.figure.Figure or None): Figure to save.
+            filename (str): File name relative to ``self.figpath``.
+        """
         if fig is not None:
             outfile = op.join(self.figpath, filename)
             fig.savefig(outfile, bbox_inches="tight")
             plt.close('all')
+        # end if
+    # end def savefig
 
     def init_outlierlist(self):
+        """Load outlier chain indices from disk if they exist.
+
+        Returns:
+            None
+        """
         outlierfile = op.join(self.datapath, 'outliers.dat')
         if op.exists(outlierfile):
             self.outliers = np.loadtxt(outlierfile, usecols=[0], dtype=int)
@@ -89,8 +203,15 @@ class PlotFromStorage(object):
         else:
             print('Outlier chains from file: None')
             self.outliers = np.zeros(0)
+        # end if
+    # end def init_outlierlist
 
     def init_filelists(self):
+        """Collect phase-specific file lists for every stored data type.
+
+        Returns:
+            None
+        """
         filetypes = ['models', 'likes', 'misfits', 'noise', 'vpvs']
         filepattern = op.join(self.datapath, 'c???_p%d%s.npy')
         files = []
@@ -101,23 +222,29 @@ class PlotFromStorage(object):
             p2files = sorted(glob.glob(filepattern % (2, ftype)))
             files.append([p1files, p2files])
             size.append(len(p1files) + len(p2files))
+        # end for
 
         if len(set(size)) == 1:
             self.modfiles, self.likefiles, self.misfiles, self.noisefiles, \
                 self.vpvsfiles = files
         else:
-            logger.info('You are missing files. Please check ' +
-                        '"%s" for completeness.' % self.datapath)
+            logger.info(
+                'You are missing files. Please check ' + '"%s" for completeness.' % self.datapath
+            )
             logger.info('(filetype, number): ' + str(zip(filetypes, size)))
+        # end if
+    # end def init_filelists
 
     def get_outliers(self, dev):
-        """Detect outlier chains.
+        """Determine chains with underperforming likelihoods.
 
-        The median likelihood from each chain (main phase) is computed.
-        Relatively to the most converged chain, outliers are declared.
-        Chains with a deviation of likelihood of dev % are declared outliers.
+        Args:
+            dev (float): Acceptable fractional deviation (0-1) from the best
+                median likelihood before a chain is flagged as an outlier.
 
-        Chose dev based on actual results.
+        Returns:
+            numpy.ndarray: Chain indices marked as outliers according to the
+            deviation criterion.
         """
         nchains = len(self.likefiles[1])
         chainidxs = np.zeros(nchains) * np.nan
@@ -130,6 +257,7 @@ class PlotFromStorage(object):
 
             chainidxs[i] = cidx
             chainmedians[i] = chainmedian
+        # end for
 
         maxlike = np.max(chainmedians)  # best chain average
 
@@ -138,7 +266,9 @@ class PlotFromStorage(object):
             scores = chainmedians / maxlike
         elif maxlike < 0:
             scores = maxlike / chainmedians
+        # end if
 
+        # end if
         outliers = chainidxs[np.where(((1-scores) > dev))]
         outscores = 1 - scores[np.where(((1-scores) > dev))]
 
@@ -151,44 +281,56 @@ class PlotFromStorage(object):
                 for i, outlier in enumerate(outliers):
                     f.write('%d\t%.3f\n' % (outlier, outscores[i]))
 
+                # end for
+            # end with
+        # end if
+
         return outliers
+    # end def get_outliers
 
     def _get_chaininfo(self):
+        """Return chain indices and model counts for posterior phase files.
+
+        Returns:
+            tuple: ``(chain_indices, nmodels)`` lists aligned with phase-2
+            likelihood files.
+        """
         nmodels = [len(np.load(file)) for file in self.likefiles[1]]
         chainlist = [self._return_c_p_t(file)[0] for file in self.likefiles[1]]
         return chainlist, nmodels
 
+    # end def _get_chaininfo
     def save_final_distribution(self, maxmodels=200000, dev=0.05):
-        """
-        Save the final models from all chains, phase 2.
+        """Combine the posterior results from all non-outlier chains.
 
-        As input, all the chain files in self.datapath are used.
-        Outlier chains will be detected automatically using % dev. The outlier
-        detection is based on the maximum reached (median) likelihood
-        by the chains. The other chains are compared to the "best" chain and
-        sorted out, if the likelihood deviates more than dev * 100 %.
+        Args:
+            maxmodels (int, optional): Upper bound for the final number of
+                stored posterior samples. Defaults to ``200000``.
+            dev (float, optional): Fractional likelihood drop tolerated before
+                rejecting a chain as an outlier. Defaults to ``0.05``.
 
-        > Chose dev based on actual results.
-
-        Maxmodels is the maximum number of models to be saved (.npy).
-        The chainmodels are combined to one final distribution file,
-        while all models are evenly thinned.
+        Returns:
+            None: The combined posterior arrays ``c_models``, ``c_likes``,
+            ``c_misfits``, ``c_noise``, and ``c_vpvs`` are saved directly to
+            ``self.datapath``.
         """
 
         def save_finalmodels(models, likes, misfits, noise, vpvs):
-            """Save chainmodels as pkl file"""
+            """Write the combined posterior arrays to ``self.datapath``."""
             names = ['models', 'likes', 'misfits', 'noise', 'vpvs']
             print('> Saving posterior distribution.')
             for i, data in enumerate([models, likes, misfits, noise, vpvs]):
                 outfile = op.join(self.datapath, 'c_%s' % names[i])
                 np.save(outfile, data)
-                print(outfile)
 
         # delete old outlier file if evaluating outliers newly
+            # end for
+        # end def save_finalmodels
         outlierfile = op.join(self.datapath, 'outliers.dat')
         if op.exists(outlierfile):
             os.remove(outlierfile)
 
+        # end if
         self.outliers = self.get_outliers(dev=dev)
 
         # due to the forced acceptance rate, each chain should have accepted
@@ -213,11 +355,13 @@ class PlotFromStorage(object):
             if cidx in self.outliers:
                 continue
 
+            # end if
             index = np.arange(nmodels[i]).astype(int)
             if nmodels[i] > mpc:
                 index = rstate.choice(index, mpc, replace=False)
                 index.sort()
 
+            # end if
             chainfiles = [self.modfiles[1][i], self.misfiles[1][i],
                           self.likefiles[1][i], self.noisefiles[1][i],
                           self.vpvsfiles[1][i]]
@@ -229,6 +373,7 @@ class PlotFromStorage(object):
                 if c == 0:
                     end = start + len(data)
 
+                # end if
                 if ftype == 'likes':
                     alllikes[start:end] = data
 
@@ -236,12 +381,14 @@ class PlotFromStorage(object):
                     if allmodels is None:
                         allmodels = np.ones((maxmodels, data[0].size)) * np.nan
 
+                    # end if
                     allmodels[start:end, :] = data
 
                 elif ftype == 'misfits':
                     if allmisfits is None:
                         allmisfits = np.ones((maxmodels, data[0].size)) * np.nan
 
+                    # end if
                     allmisfits[start:end, :] = data
 
                 elif ftype == 'noise':
@@ -250,9 +397,11 @@ class PlotFromStorage(object):
                 elif ftype == 'vpvs':
                     allvpvs[start:end] = data
 
+                # end if
+            # end for
             start = end
 
-        # exclude nans
+        # end for
         allmodels = allmodels[~np.isnan(alllikes)]
         allmisfits = allmisfits[~np.isnan(alllikes)]
         allnoise = allnoise[~np.isnan(alllikes)]
@@ -260,15 +409,32 @@ class PlotFromStorage(object):
         alllikes = alllikes[~np.isnan(alllikes)]
 
         save_finalmodels(allmodels, alllikes, allmisfits, allnoise, allvpvs)
-
+        
+    # end def save_final_distribution
     def _unique_legend(self, handles, labels):
-        # if a key is double, the last handle in the row is returned to the key
+        """Return the latest handle for each legend label.
+
+        Args:
+            handles (list): Matplotlib handles.
+            labels (list): Corresponding legend labels.
+
+        Returns:
+            tuple: Unique handles and labels preserved as insertion-ordered
+            lists.
+        """
         legend = OrderedDict(zip(labels, handles))
         return legend.values(), legend.keys()
 
+    # end def _unique_legend
     def _return_c_p_t(self, filename):
-        """Return chainindex, phase number, type of file from filename.
-        Only for single chain results.
+        """Extract chain metadata from a stored filename.
+
+        Args:
+            filename (str): File path following ``c???_p?.npy`` naming.
+
+        Returns:
+            tuple: ``(chainidx, phase, ftype)`` where ``phase`` is ``p1`` or
+            ``p2`` and ``ftype`` is the trailing token (e.g., ``models``).
         """
         c, pt = op.basename(filename).split('.npy')[0].split('_')
         cidx = int(c[1:])
@@ -276,22 +442,55 @@ class PlotFromStorage(object):
 
         return cidx, phase, ftype
 
+    # end def _return_c_p_t
     def _sort(self, chainidxstring):
+        """Convert ``c???`` identifiers into sortable integers.
+
+        Args:
+            chainidxstring (str): Chain identifier string (e.g. ``c001``).
+
+        Returns:
+            int: Integer chain index.
+        """
         chainidx = int(chainidxstring[1:])
         return chainidx
 
+    # end def _sort
     def _get_layers(self, models):
+        """Count the number of layers in each model array.
+
+        Args:
+            models (numpy.ndarray): Collection of stacked model vectors.
+
+        Returns:
+            numpy.ndarray: Layer counts per model.
+        """
         layernumber = np.array([(len(model[~np.isnan(model)]) / 2 - 1)
                                 for model in models])
         return layernumber
 
+    # end def _get_layers
     @tryexcept
     def plot_refmodel(self, fig, mtype='model', **kwargs):
+        """Overlay stored reference values onto an existing figure.
+
+        Args:
+            fig (matplotlib.figure.Figure): Figure returned by other plotting
+                helpers.
+            mtype (str, optional): Reference type to plot. One of
+                ``model``, ``nlays``, ``noise``, or ``vpvs``. Defaults to
+                ``model``.
+            **kwargs: Passed to the matplotlib plotting call.
+
+        Returns:
+            matplotlib.figure.Figure: The modified input figure.
+        """
         if fig is not None and self.refmodel[mtype] is not None:
             if mtype == 'nlays':
                 nlays = self.refmodel[mtype]
                 fig.axes[0].axvline(nlays, color='red', lw=0.5, alpha=0.7)
 
+            # end if
             if mtype == 'model':
                 dep, vs = self.refmodel['model']
                 assert len(dep) == len(vs)
@@ -301,20 +500,43 @@ class PlotFromStorage(object):
                     for d in deps:
                         fig.axes[1].axhline(d, **kwargs)
 
+                    # end for
+                # end if
+            # end if
             if mtype == 'noise':
                 noise = self.refmodel[mtype]
                 for i in range(len(noise)):
                     fig.axes[i].axvline(
                         noise[i], color='red', lw=0.5, alpha=0.7)
 
+                # end for
+            # end if
             if mtype == 'vpvs':
                 vpvs = self.refmodel[mtype]
                 fig.axes[0].axvline(vpvs, color='red', lw=0.5, alpha=0.7)
+            # end if
+        # end if
         return fig
 
 # Plot values per iteration.
 
+    # end def plot_refmodel
     def _plot_iitervalues(self, files, ax, layer=0, misfit=0, noise=0, ind=-1):
+        """Draw iteration-wise traces for models, misfits, noise, or vp/vs.
+
+        Args:
+            files (list[str]): File paths containing per-iteration values.
+            ax (matplotlib.axes.Axes): Axis to draw on.
+            layer (bool, optional): Plot the number of layers instead of raw
+                values. Defaults to ``0``.
+            misfit (bool, optional): Plot misfit series. Defaults to ``0``.
+            noise (bool, optional): Plot noise parameters. Defaults to ``0``.
+            ind (int, optional): Component index used when ``misfit`` or
+                ``noise`` is selected. Defaults to ``-1``.
+
+        Returns:
+            matplotlib.axes.Axes: Axis containing the plotted lines.
+        """
         unifiles = set([f.replace('p1', 'p2') for f in files])
         base = cm.get_cmap(name='rainbow')
         color_list = base(np.linspace(0, 1, len(unifiles)))
@@ -335,9 +557,11 @@ class PlotFromStorage(object):
             data = np.load(file)
             if layer:
                 data = self._get_layers(data)
+            # end if
             if misfit or noise:
                 data = data.T[ind]
 
+            # end if
             iters = (np.linspace(xmin, 0, data.size) if phase == 1 else
                      np.linspace(0, xmax, data.size))
             label = 'c%d' % (chainidx)
@@ -353,8 +577,11 @@ class PlotFromStorage(object):
                 else:
                     datamax = np.max([datamax, data.max()])
                     datamin = np.min([datamin, data.min()])
+                # end if
                 n += 1
 
+            # end if
+        # end for
         ax.set_xlim(xmin, xmax)
         ax.set_ylim(datamin*0.95, datamax*1.05)
         ax.axvline(0, color='k', ls=':', alpha=0.7)
@@ -368,12 +595,25 @@ class PlotFromStorage(object):
                     verticalalignment='top',
                     transform=ax.transAxes)
 
+        # end for
         ax.set_xlabel('# Iteration')
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         return ax
 
+    # end def _plot_iitervalues
     @tryexcept
     def plot_iitermisfits(self, nchains=6, ind=-1):
+        """Plot misfit trajectories for a subset of chains.
+
+        Args:
+            nchains (int, optional): Number of chains to show. Defaults to 6.
+            ind (int, optional): Misfit index mapping to ``self.refs``.
+                Defaults to ``-1`` (joint misfit).
+
+        Returns:
+            matplotlib.figure.Figure: Misfit figure or ``None`` if plotting
+            fails.
+        """
         files = self.misfiles[0][:nchains] + self.misfiles[1][:nchains]
 
         fig, ax = plt.subplots(figsize=(7, 4))
@@ -381,8 +621,18 @@ class PlotFromStorage(object):
         ax.set_ylabel('%s misfit' % self.refs[ind])
         return fig
 
+    # end def plot_iitermisfits
     @tryexcept
     def plot_iiterlikes(self, nchains=6):
+        """Plot likelihood trajectories for a subset of chains.
+
+        Args:
+            nchains (int, optional): Number of chains to show. Defaults to 6.
+
+        Returns:
+            matplotlib.figure.Figure: Likelihood figure or ``None`` if plotting
+            fails.
+        """
         files = self.likefiles[0][:nchains] + self.likefiles[1][:nchains]
 
         fig, ax = plt.subplots(figsize=(7, 4))
@@ -390,15 +640,19 @@ class PlotFromStorage(object):
         ax.set_ylabel('Likelihood')
         return fig
 
+    # end def plot_iiterlikes
     @tryexcept
     def plot_iiternoise(self, nchains=6, ind=-1):
-        """
-        nind = noiseindex, meaning:
-        0: 'rfnoise_corr'  # should be const, if gauss
-        1: 'rfnoise_sigma'
-        2: 'swdnoise_corr'  # should be 0
-        3: 'swdnoise_sigma'
-        # dependent on number and order of targets.
+        """Plot inferred noise hyper-parameters per iteration.
+
+        Args:
+            nchains (int, optional): Number of chains to show. Defaults to 6.
+            ind (int, optional): Flattened noise index. Even entries mark the
+                correlation term; odd entries represent sigma. Defaults to -1.
+
+        Returns:
+            matplotlib.figure.Figure: Noise-parameter figure or ``None`` if
+            plotting fails.
         """
         files = self.noisefiles[0][:nchains] + self.noisefiles[1][:nchains]
 
@@ -410,8 +664,18 @@ class PlotFromStorage(object):
         ax.set_ylabel(parameter[ind])
         return fig
 
+    # end def plot_iiternoise
     @tryexcept
     def plot_iiternlayers(self, nchains=6):
+        """Plot the accepted layer count per iteration for several chains.
+
+        Args:
+            nchains (int, optional): Number of chains to show. Defaults to 6.
+
+        Returns:
+            matplotlib.figure.Figure: Layer-count figure or ``None`` if plotting
+            fails.
+        """
         files = self.modfiles[0][:nchains] + self.modfiles[1][:nchains]
 
         fig, ax = plt.subplots(figsize=(7, 4))
@@ -419,8 +683,18 @@ class PlotFromStorage(object):
         ax.set_ylabel('Number of layers')
         return fig
 
+    # end def plot_iiternlayers
     @tryexcept
     def plot_iitervpvs(self, nchains=6):
+        """Plot vp/vs ratios per iteration for several chains.
+
+        Args:
+            nchains (int, optional): Number of chains to show. Defaults to 6.
+
+        Returns:
+            matplotlib.figure.Figure: Vp/Vs figure or ``None`` if plotting
+            fails.
+        """
         files = self.vpvsfiles[0][:nchains] + self.vpvsfiles[1][:nchains]
 
         fig, ax = plt.subplots(figsize=(7, 4))
@@ -433,8 +707,18 @@ class PlotFromStorage(object):
 # And as 2D histograms / 1D plot for final velocity-depth models
 # Considering weighted models.
 
+    # end def plot_iitervpvs
     @staticmethod
     def _plot_bestmodels(bestmodels, dep_int=None):
+        """Plot mean/median/std models as line plots.
+
+        Args:
+            bestmodels (numpy.ndarray): Ensemble of models in vector form.
+            dep_int (numpy.ndarray, optional): Depth grid for interpolation.
+
+        Returns:
+            tuple: ``(fig, ax)`` with the rendered matplotlib objects.
+        """
         fig, ax = plt.subplots(figsize=(4.4, 7))
 
         models = ['mean', 'median', 'stdminmax']
@@ -450,6 +734,7 @@ class PlotFromStorage(object):
             ax.plot(vs.T, dep, color=colors[i], label=model,
                     ls=ls[i], lw=lw[i])
 
+        # end for
         ax.invert_yaxis()
         ax.set_ylabel('Depth in km')
         ax.set_xlabel('$V_S$ in km/s')
@@ -458,13 +743,18 @@ class PlotFromStorage(object):
         ax.legend(han[:-1], lab[:-1], loc=3)
         return fig, ax
 
+    # end def _plot_bestmodels
     @staticmethod
     def _plot_bestmodels_hist(models, dep_int=None):
-        """
-        2D histogram with 30 vs cells and 50 depth cells.
-        As plot depth is limited to 100 km, each depth cell is a 2 km.
+        """Visualize posterior velocities as a 2D histogram.
 
-        pinterf is the number of interfaces to be plot (derived from gradient)
+        Args:
+            models (numpy.ndarray): Weighted posterior models.
+            dep_int (numpy.ndarray, optional): Depth grid for interpolation.
+
+        Returns:
+            tuple: ``(fig, axes)`` containing the 2D histogram and auxiliary
+            plots for interfaces.
         """
         if dep_int is None:
             dep_int = np.linspace(0, 100, 201)  # interppolate depth to 0.5 km.
@@ -478,6 +768,7 @@ class PlotFromStorage(object):
             # nbin = np.arange(0, maxdepth + interp, interp)  # interp km bins
 
         # get interfaces, #first
+        # end if
         models2 = ModelMatrix._replace_zvnoi_h(models)
         models2 = [model[~np.isnan(model)] for model in models2]
         yinterf = [np.cumsum(model[int(model.size/2):-1]) for model in models2]
@@ -515,6 +806,7 @@ class PlotFromStorage(object):
             color = colors[c]
             axes[0].plot(vs, dep, color=color, lw=1, alpha=0.9, label=choice)
 
+        # end for
         vs_mode, dep_mode = singlemodels['mode']
         axes[0].legend(loc=3)
 
@@ -534,29 +826,70 @@ class PlotFromStorage(object):
         axes[1].set_xticks([])
         return fig, axes
 
+    # end def _plot_bestmodels_hist
     def _get_posterior_data(self, data, final, chainidx=0):
+        """Load posterior arrays for the requested dataset names.
+
+        Args:
+            data (list[str]): Dataset identifiers such as ``'models'`` or
+                ``'likes'``.
+            final (bool): If ``True``, load combined posterior files
+                (``c_<name>.npy``). Otherwise pull the specified chain's phase
+                2 arrays.
+            chainidx (int, optional): Chain index to use when ``final`` is
+                ``False``. Defaults to ``0``.
+
+        Returns:
+            list[numpy.ndarray]: Loaded arrays in the same order as ``data``.
+        """
         if final:
             filetempl = op.join(self.datapath, 'c_%s.npy')
         else:
             filetempl = op.join(self.datapath, 'c%.3d_p2%s.npy' % (chainidx, '%s'))
 
+        # end if
         outarrays = []
         for dataset in data:
             datafile = filetempl % dataset
             p2data = np.load(datafile)
             outarrays.append(p2data)
 
+        # end for
         return outarrays
 
+    # end def _get_posterior_data
     def get_models(self, data, final, chainidx=0):
+        """Helper used by external tools to load posterior models.
+
+        Args:
+            data (list[str]): Dataset names; should include ``'models'``.
+            final (bool): Whether to load combined posterior models.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            numpy.ndarray: Posterior model vectors.
+        """
         models, = self._get_posterior_data(data, final, chainidx)
         return models
-    # end get_models
 
+    # end def get_models
     def _plot_posterior_distribution(self, data, bins, formatter='%.2f', ax=None):
+        """Draw and annotate a univariate posterior histogram.
+
+        Args:
+            data (numpy.ndarray): Samples to histogram.
+            bins (int or array-like): Histogram bins.
+            formatter (str, optional): Formatting string for annotations.
+            ax (matplotlib.axes.Axes, optional): Axis to draw on; created when
+                ``None``.
+
+        Returns:
+            matplotlib.axes.Axes: Axis with the histogram.
+        """
         if ax is None:
             fig, ax = plt.subplots(figsize=(3.5, 3))
 
+        # end if
         count, bins, _ = ax.hist(data, bins=bins, color='darkblue', alpha=0.7,
                                  edgecolor='white', linewidth=0.4)
         cbins = (bins[:-1] + bins[1:]) / 2.
@@ -571,6 +904,7 @@ class PlotFromStorage(object):
                     verticalalignment='top',
                     transform=ax.transAxes)
 
+        # end if
         ax.axvline(median, color='k', ls=':', lw=1)
         
         # xticks = np.array(ax.get_xticks())
@@ -581,8 +915,18 @@ class PlotFromStorage(object):
         ax.spines['right'].set_visible(False)
         return ax
 
+    # end def _plot_posterior_distribution
     @tryexcept
     def plot_posterior_likes(self, final=True, chainidx=0):
+        """Plot the marginal posterior likelihood distribution.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing the histogram.
+        """
         likes, = self._get_posterior_data(['likes'], final, chainidx)
         bins = 20
         formatter = '%d'
@@ -591,8 +935,19 @@ class PlotFromStorage(object):
         ax.set_xlabel('Likelihood')
         return ax.figure
 
+    # end def plot_posterior_likes
     @tryexcept
     def plot_posterior_misfits(self, final=True, chainidx=0):
+        """Plot marginal posterior misfits for each target.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing target-specific
+            misfit histograms.
+        """
         misfits, = self._get_posterior_data(['misfits'], final, chainidx)
 
         datasets = [misfit for misfit in misfits.T]
@@ -605,10 +960,21 @@ class PlotFromStorage(object):
             axes[i] = self._plot_posterior_distribution(data, bins, formatter, ax=axes[i])
             axes[i].set_xlabel('RMS misfit (%s)' % self.refs[i])
 
+        # end for
         return fig
 
+    # end def plot_posterior_misfits
     @tryexcept
     def plot_posterior_nlayers(self, final=True, chainidx=0):
+        """Plot the posterior distribution of accepted layer counts.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            matplotlib.figure.Figure: Figure with the layer-count histogram.
+        """
         models, = self._get_posterior_data(['models'], final, chainidx)
 
         # get interfaces
@@ -626,8 +992,18 @@ class PlotFromStorage(object):
         ax.set_xlabel('Number of layers')
         return ax.figure
 
+    # end def plot_posterior_nlayers
     @tryexcept
     def plot_posterior_vpvs(self, final=True, chainidx=0):
+        """Plot the marginal posterior of vp/vs.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing the vp/vs histogram.
+        """
         vpvs, = self._get_posterior_data(['vpvs'], final, chainidx)
         bins = 20
         formatter = '%.2f'
@@ -636,8 +1012,19 @@ class PlotFromStorage(object):
         ax.set_xlabel('$V_P$ / $V_S$')
         return ax.figure
 
+    # end def plot_posterior_vpvs
     @tryexcept
     def plot_posterior_noise(self, final=True, chainidx=0):
+        """Plot posterior distributions of noise hyper-parameters.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            matplotlib.figure.Figure: Figure with one histogram per noise
+            parameter.
+        """
         noise, = self._get_posterior_data(['noise'], final, chainidx)
         label = np.concatenate([['correlation (%s)' % ref, '$\sigma$ (%s)' % ref]
                                for ref in self.refs[:-1]])
@@ -652,6 +1039,7 @@ class PlotFromStorage(object):
             else:
                 ax = axes[i % 2]
 
+            # end if
             if np.std(data) == 0:  # constant during inversion
                 m = np.mean(data)
                 bins = [m-1, m-0.1, m+0.1, m+1]
@@ -665,11 +1053,23 @@ class PlotFromStorage(object):
                 bins = 20
                 formatter = '%.4f'
                 ax = self._plot_posterior_distribution(data, bins, formatter, ax=ax)
+            # end if
             ax.set_xlabel(label[i])
+        # end for
         return fig
 
+    # end def plot_posterior_noise
     @tryexcept
     def plot_posterior_others(self, final=True, chainidx=0):
+        """Plot a dashboard of likelihood, misfit, vp/vs, and layer marginals.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+
+        Returns:
+            matplotlib.figure.Figure: Multi-panel figure with histograms.
+        """
         likes, = self._get_posterior_data(['likes'], final, chainidx)
 
         misfits, = self._get_posterior_data(['misfits'], final, chainidx)
@@ -709,17 +1109,31 @@ class PlotFromStorage(object):
                     ax.set_xticks(xticks)
                     ax.set_xticklabels(xticks)
 
+                # end if
+            # end if
             ax.set_xlabel(labels[i])
+        # end for
         return ax.figure
 
+    # end def plot_posterior_others
     @tryexcept
     def plot_posterior_models1d(self, final=True, chainidx=0, depint=1):
-        """depint is the depth interpolation used for binning. Default=1km."""
+        """Plot line-based summaries (mean/median/std) of the posterior models.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Specific chain when ``final`` is ``False``.
+            depint (float, optional): Depth interpolation in km for resampling.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing the line plot.
+        """
         if final:
             nchains = self.initparams['nchains'] - self.outliers.size
         else:
             nchains = 1
 
+        # end if
         models, = self._get_posterior_data(['models'], final, chainidx)
 
         dep_int = np.arange(self.priors['z'][0],
@@ -732,12 +1146,24 @@ class PlotFromStorage(object):
         return fig
 
     #@tryexcept
+    # end def plot_posterior_models1d
     def plot_posterior_models2d(self, final=True, chainidx=0, depint=1):
+        """Plot 2D histograms of posterior vs-depth models.
+
+        Args:
+            final (bool, optional): Use combined posterior files if ``True``.
+            chainidx (int, optional): Chain index when ``final`` is ``False``.
+            depint (float, optional): Depth interpolation step in km.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing the histogram panels.
+        """
         if final:
             nchains = self.initparams['nchains'] - self.outliers.size
         else:
             nchains = 1
 
+        # end if
         models, = self._get_posterior_data(['models'], final, chainidx)
 
         dep_int = np.arange(self.priors['z'][0],
@@ -752,15 +1178,32 @@ class PlotFromStorage(object):
 
 # Plot moho depth - crustal vs tradeoff
 
+    # end def plot_posterior_models2d
     @tryexcept
     def plot_moho_crustvel_tradeoff(self, moho=None, mohovs=None, refmodel=None):
+        """Analyze how Moho depth correlates with crustal velocity metrics.
+
+        Args:
+            moho (tuple, optional): Depth bounds (km) defining the Moho search
+                window. Defaults to ``self.priors['z']``.
+            mohovs (float, optional): Minimum velocity identifying the Moho.
+                Defaults to ``4.2`` km/s.
+            refmodel (tuple, optional): Reference interfaces (depth, velocity)
+                to compare against.
+
+        Returns:
+            matplotlib.figure.Figure: Multi-panel histogram of Moho-related
+            statistics.
+        """
         models, vpvs = self._get_posterior_data(['models', 'vpvs'], final=True)
 
         if moho is None:
             moho = self.priors['z']
+        # end if
         if mohovs is None:
             mohovs = 4.2  # km/s
 
+        # end if
         mohos = np.zeros(len(models)) * np.nan
         vscrust = np.zeros(len(models)) * np.nan
         vslastlayer = np.zeros(len(models)) * np.nan
@@ -778,15 +1221,18 @@ class PlotFromStorage(object):
                 continue
 
             # mohoidx = mohoidxs[np.argmax(vsstep[mohoidxs])][0]
+            # end if
             mohoidxs = mohoidxs.flatten()
 
             mohoidxs_vs = np.where((vs > mohovs))[0]-1
             if len(mohoidxs_vs) == 0:
                 continue
 
+            # end if
             mohoidx = np.intersect1d(mohoidxs, mohoidxs_vs)
             if len(mohoidx) == 0:
                 continue
+            # end if
             mohoidx = mohoidx[0]
             # ------
 
@@ -801,6 +1247,7 @@ class PlotFromStorage(object):
             vsjumps[i] = vsjump
 
         # exclude nan values
+        # end for
         mohos = mohos[~np.isnan(vsjumps)]
         vscrust = vscrust[~np.isnan(vsjumps)]
         vslastlayer = vslastlayer[~np.isnan(vsjumps)]
@@ -830,6 +1277,7 @@ class PlotFromStorage(object):
             except:
                 pass
 
+        # end for
         for n, xdata in enumerate([vslastlayer, vscrust, vsjumps]):
             try:
                 ax[1][n].set_xlabel(labels[n])
@@ -853,6 +1301,7 @@ class PlotFromStorage(object):
             ax[0][n].set_yticklabels([], visible=False)
             ax[0][n].set_xticklabels([], visible=False)
 
+        # end for
         ax[1][1].set_yticklabels([], visible=False)
         ax[1][2].set_yticklabels([], visible=False)
         ax[1][3].set_yticklabels([], visible=False)
@@ -902,15 +1351,23 @@ class PlotFromStorage(object):
                 ax[1][n].axhline(truemoho, color='red', ls='--', lw=0.5, alpha=0.7)
                 ax[1][n].axvline(xdata, color='red', ls='--', lw=0.5, alpha=0.7)
 
+            # end for
+        # end if
         return fig
 
 # Plot current models and data fits. also plot best data fit incl. model.
 
+    # end def plot_moho_crustvel_tradeoff
     @tryexcept
     def plot_currentmodels(self, nchains):
-        """Return fig.
+        """Plot step models for the latest accepted state of each chain.
 
-        Plots the first nchains chains, no matter of outlier status.
+        Args:
+            nchains (int): Number of chains to visualize regardless of outlier
+                status.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing velocity-depth curves.
         """
         fig, ax = plt.subplots(figsize=(4, 6.5))
 
@@ -932,6 +1389,7 @@ class PlotFromStorage(object):
             ax.plot(cvs, cdepth, color=color, ls='-', lw=0.8,
                     alpha=0.7, label=label)
 
+        # end for
         ax.invert_yaxis()
         ax.set_xlabel('$V_S$ in km/s')
         ax.set_ylabel('Depth in km')
@@ -942,9 +1400,18 @@ class PlotFromStorage(object):
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
         return fig
 
+    # end def plot_currentmodels
     @tryexcept
     def plot_currentdatafits(self, nchains):
-        """Plot the first nchains chains, no matter of outlier status.
+        """Plot current synthetic data fits for the first ``nchains`` chains.
+
+        Args:
+            nchains (int): Number of chains to visualize regardless of outlier
+                status.
+
+        Returns:
+            matplotlib.figure.Figure: Figure comparing observed and modeled
+            data per target.
         """
         base = cm.get_cmap(name='rainbow')
         color_list = base(np.linspace(0, 1, nchains))
@@ -976,6 +1443,7 @@ class PlotFromStorage(object):
                 if len(targets.targets) > 1:
                     if ((len(targets.targets) - 1) - n) < 1e-2:
                         label = 'c%d / %.3f' % (chainidx, jmisfit)
+                    # end if
                     ax[n].plot(xmod, ymod, color=color, alpha=0.7, lw=0.8,
                                label=label)
                 else:
@@ -983,6 +1451,9 @@ class PlotFromStorage(object):
                     ax.plot(xmod, ymod, color=color, alpha=0.5, lw=0.7,
                             label=label)
 
+                # end if
+            # end for
+        # end for
         if len(targets.targets) > 1:
             ax[0].set_title('Current data fits')
             idx = len(targets.targets) - 1
@@ -995,16 +1466,19 @@ class PlotFromStorage(object):
             handles, labels = self._unique_legend(han, lab)
             ax.legend().set_visible(False)
 
+        # end if
         fig.legend(handles, labels, loc='center left',
                    bbox_to_anchor=(0.92, 0.5))
         return fig
 
+    # end def plot_currentdatafits
     @tryexcept
     def plot_bestmodels(self):
-        """Return fig.
+        """Plot the best-fitting model encountered per non-outlier chain.
 
-        Plot the best (fit) models ever discovered per each chain,
-        ignoring outliers.
+        Returns:
+            matplotlib.figure.Figure: Figure showing velocity-depth curves for
+            each best-fitting model.
         """
         fig, ax = plt.subplots(figsize=(4, 6.5))
 
@@ -1018,6 +1492,7 @@ class PlotFromStorage(object):
             chainidx, _, _ = self._return_c_p_t(modfile)
             if chainidx in self.outliers:
                 continue
+            # end if
             models = np.load(modfile)
             vpvs = np.load(modfile.replace('models', 'vpvs')).T
             misfits = np.load(modfile.replace('models', 'misfits')).T[-1]
@@ -1031,6 +1506,7 @@ class PlotFromStorage(object):
                 thebestvpvs = bestvpvs
                 thebestchain = chainidx
 
+            # end if
             vp, vs, h = Model.get_vp_vs_h(bestmodel, bestvpvs, self.mantle)
             cvp, cvs, cdepth = Model.get_stepmodel_from_h(h=h, vs=vs, vp=vp)
 
@@ -1042,6 +1518,7 @@ class PlotFromStorage(object):
         # ax.plot(cvs, cdepth, color='red', ls='-', lw=1,
         #         alpha=0.8, label=label)
 
+        # end for
         ax.invert_yaxis()
         ax.set_xlabel('$V_S$ in km/s')
         ax.set_ylabel('Depth in km')
@@ -1053,10 +1530,14 @@ class PlotFromStorage(object):
         # ax.legend(loc=3)
         return fig
 
+    # end def plot_bestmodels
     @tryexcept
     def plot_bestdatafits(self):
-        """Plot best data fits from each chain and ever best,
-        ignoring outliers."""
+        """Plot synthetic data from the best-fitting model of each chain.
+
+        Returns:
+            matplotlib.figure.Figure: Figure containing data fits per target.
+        """
         targets = Targets.JointTarget(targets=self.targets)
         fig, ax = targets.plot_obsdata(mod=False)
 
@@ -1070,6 +1551,7 @@ class PlotFromStorage(object):
             chainidx, _, _ = self._return_c_p_t(modfile)
             if chainidx in self.outliers:
                 continue
+            # end if
             models = np.load(modfile)
             vpvs = np.load(modfile.replace('models', 'vpvs')).T
             misfits = np.load(modfile.replace('models', 'misfits')).T[-1]
@@ -1083,6 +1565,7 @@ class PlotFromStorage(object):
                 thebestvpvs = bestvpvs
                 thebestchain = chainidx
 
+            # end if
             vp, vs, h = Model.get_vp_vs_h(bestmodel, bestvpvs, self.mantle)
             rho = vp * 0.32 + 0.77
 
@@ -1095,6 +1578,9 @@ class PlotFromStorage(object):
                 else:
                     ax.plot(xmod, ymod, color='k', alpha=0.5, lw=0.7)
 
+                # end if
+            # end for
+        # end for
         if len(targets.targets) > 1:
             ax[0].set_title('Best data fits from %d chains' %
                             (len(modfiles)-self.outliers.size))
@@ -1109,12 +1595,23 @@ class PlotFromStorage(object):
             handles, labels = self._unique_legend(han, lab)
             ax.legend().set_visible(False)
 
+        # end if
         fig.legend(handles, labels, loc='center left',
                    bbox_to_anchor=(0.92, 0.5))
         return fig
 
+    # end def plot_bestdatafits
     @tryexcept
     def plot_rfcorr(self, rf='prf'):
+        """Compare receiver-function residuals with noise realizations.
+
+        Args:
+            rf (str, optional): Receiver-function name present in ``self.refs``.
+
+        Returns:
+            matplotlib.figure.Figure: Figure showing residuals and sampled
+            noise.
+        """
         from BayHunter import SynthObs
 
         p2models, p2noise, p2misfits, p2vpvs = self._get_posterior_data(
@@ -1153,11 +1650,17 @@ class PlotFromStorage(object):
 
         return fig
 
+    # end def plot_rfcorr
     def merge_pdfs(self):
-        from PyPDF2 import PdfFileReader, PdfFileWriter
+        """Combine all plot PDFs into a single ``c_summary.pdf`` artifact.
+
+        Returns:
+            None
+        """
+        from PyPDF2 import PdfReader, PdfWriter
 
         outputfile = op.join(self.figpath, 'c_summary.pdf')
-        output = PdfFileWriter()
+        output = PdfWriter()
         pdffiles = glob.glob(op.join(self.figpath + os.sep + 'c_*.pdf'))
         pdffiles.sort(key=op.getmtime)
 
@@ -1165,25 +1668,29 @@ class PlotFromStorage(object):
             if pdffile == outputfile:
                 continue
 
-            document = PdfFileReader(open(pdffile, 'rb'))
-            for i in range(document.getNumPages()):
-                output.addPage(document.getPage(i))
+            # end if
+            document = PdfReader(open(pdffile, 'rb'))
+            for i in range(len(document.pages)):
+                output.add_page(document.pages[i])
 
+            # end for
+        # end for
         with open(outputfile, "wb") as f:
             output.write(f)
 
+        # end with
+    # end def merge_pdfs
     def save_chainplots(self, cidx=0, refmodel=dict(), depint=None):
-        """
-        Refmodel is a dictionary and must contain plottable values:
-        - 'vs' and 'dep' for the vs-depth plots, will be plotted as given
-        - 'rfnoise_corr', 'rfnoise_sigma', 'swdnoise_corr', 'swdnoise_sigma' -
-        in this order as noise parameter reference in histogram plots
-        - 'nlays' number of layers as reference
+        """Save posterior summary plots for a specific chain.
 
-        Only given values will be plotted.
+        Args:
+            cidx (int, optional): Chain index to visualize.
+            refmodel (dict, optional): Dictionary with optional reference
+                entries (``model``, ``nlays``, ``noise``) to overlay.
+            depint (float, optional): Depth interpolation step in km.
 
-        - depint is the interpolation only for histogram plotting.
-        Default is 1 km. A finer interpolation increases the plotting time.
+        Returns:
+            None
         """
         self.refmodel.update(refmodel)
         # plot chain specific posterior distributions
@@ -1209,19 +1716,18 @@ class PlotFromStorage(object):
         self.plot_refmodel(fig5e, 'model', color='red', lw=0.5, alpha=0.7)
         self.savefig(fig5e, 'c%.3d_posterior_models2d.pdf' % cidx)
 
+    # end def save_chainplots
     def save_plots(self, nchains=5, refmodel=dict(), depint=1):
-        """
-        Refmodel is a dictionary and must contain plottable values:
-        - 'vs' and 'dep' (np.arrays) for the vs-depth plots, will be plotted as given
-        - noise parameters, if e.g., inverting for RF and SWD are:
-        'rfnoise_corr', 'rfnoise_sigma', 'swdnoise_corr', 'swdnoise_sigma',
-        (depends on number of targets, but order must be correlation / sigma)
-        - 'nlays' number of layers as reference
+        """Save the default set of diagnostic plots for all chains.
 
-        Only given values will be plotted.
+        Args:
+            nchains (int, optional): Number of chains shown in iteration plots.
+            refmodel (dict, optional): Optional reference dictionary used by
+                ``plot_refmodel``.
+            depint (float, optional): Depth interpolation step in km.
 
-        - depint is the interpolation only for histogram plotting.
-        Default is 1 km. A finer interpolation increases the plotting time.
+        Returns:
+            None
         """
         self.refmodel.update(refmodel)
 
@@ -1246,6 +1752,7 @@ class PlotFromStorage(object):
             self.savefig(fig1d, 'c_iiter_noisepar%d.pdf' % ind)
 
         # plot current models and datafit
+        # end for
         fig3a = self.plot_currentmodels(nchains=nchains)
         self.plot_refmodel(fig3a, 'model', color='k', lw=1)
         self.savefig(fig3a, 'c_currentmodels.pdf')
@@ -1272,3 +1779,5 @@ class PlotFromStorage(object):
         fig2e = self.plot_posterior_models2d(depint=depint)
         self.plot_refmodel(fig2e, 'model', color='red', lw=0.5, alpha=0.7)
         self.savefig(fig2e, 'c_posterior_models2d.pdf')
+    # end def save_plots
+# end class PlotFromStorage

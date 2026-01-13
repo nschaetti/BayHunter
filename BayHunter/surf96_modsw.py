@@ -21,6 +21,8 @@ class SurfDisp(object):
         https://github.com/miili/pysurf96
     """
 
+    RUN_COUNTER = 0
+
     def __init__(self, obsx, ref):
         self.obsx = obsx
         self.kmax = obsx.size
@@ -82,6 +84,11 @@ forward modeling plugin with target.update_plugin(MyForwardClass()).\n \
 
         return thkm, vpm, vsm, rhom
 
+    @classmethod
+    def reset_run_counter(cls):
+        cls.RUN_COUNTER = 0
+    # end def reset_run_counter
+
     def run_model(self, h, vp, vs, rho, **params):
         """ The forward model will be run with the parameters below.
 
@@ -114,6 +121,9 @@ forward modeling plugin with target.update_plugin(MyForwardClass()).\n \
             pers[:kmax] = self.obsx
 
         dispvel = np.zeros(60)  # result
+        # print(f"Running SurfDisp 1: {SurfDisp.RUN_COUNTER}")
+        SurfDisp.RUN_COUNTER += 1
+        # print(f"Running SurfDisp 2: {SurfDisp.RUN_COUNTER}")
         error = surfdisp96(h, vp, vs, rho, nlayer, iflsph, iwave,
                            mode, igr, kmax, pers, dispvel)
 

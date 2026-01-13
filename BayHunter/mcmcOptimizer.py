@@ -351,6 +351,7 @@ class MCMC_Optimizer(object):
             self.chains.sort(key=idxsort)
         except:
             pass
+        # end try
 
         # Report total runtime
         runtime = (time.time() - t0)

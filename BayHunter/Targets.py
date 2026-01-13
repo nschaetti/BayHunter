@@ -60,6 +60,7 @@ class ModeledData(object):
         elif ref in swd_targets:
             from BayHunter.surf96_modsw import SurfDisp
             # print(f"obsx={obsx.shape}, ref={ref}")
+            print(f"ModeledData: {id(SurfDisp)}")
             self.plugin = SurfDisp(obsx, ref)
             self.xlabel = 'Period in s'
 

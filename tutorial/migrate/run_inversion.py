@@ -30,8 +30,9 @@ from data_utils import (
     save_two_column_file,
 )
 
-from BayHunter import PlotFromStorage, Targets, utils
+from BayHunter import PlotFromStorage, Targets, utils, PlotFromChains
 from BayHunter.mcmcOptimizer import MCMC_Optimizer
+from BayHunter.surf96_modsw import SurfDisp
 
 
 def parse_args() -> argparse.Namespace:
@@ -133,14 +134,33 @@ def update_initparams(initparams: dict, args: argparse.Namespace) -> None:
 # end def update_initparams
 
 
-def run_plots(savepath: Path, station: str, maxmodels: int) -> None:
-    """Generate BayHunter summary plots from the saved inversion output."""
+def run_plots_storage(
+        savepath: Path,
+        station: str,
+        maxmodels: int
+) -> None:
+    """
+    Generate BayHunter summary plots from the saved inversion output.
+    """
     data_dir = savepath / "data"
     configfile = data_dir / f"{station}_config.pkl"
     if not configfile.exists():
         raise FileNotFoundError(f"BayHunter config file not found: {configfile}")
     # end if
-    plotter = PlotFromStorage(str(configfile))
+    plotter = PlotFromStorage(configfile=str(configfile))
+    plotter.save_final_distribution(maxmodels=maxmodels, dev=0.05)
+    plotter.save_plots()
+    plotter.merge_pdfs()
+# end def run_plots
+
+
+def run_plots(
+        initparams: dict,
+        optimizer: MCMC_Optimizer,
+        maxmodels: int
+) -> None:
+    """Generate BayHunter summary plots from the saved inversion output."""
+    plotter = PlotFromChains(initparams=initparams, optimizer=optimizer)
     plotter.save_final_distribution(maxmodels=maxmodels, dev=0.05)
     plotter.save_plots()
     plotter.merge_pdfs()
@@ -193,6 +213,7 @@ def main() -> None:
 
     # Apply CLI overrides before preparing folders.
     update_initparams(initparams, args)
+
     station = initparams["station"]
     savepath = Path(initparams["savepath"]).resolve()
     savepath.mkdir(parents=True, exist_ok=True)
@@ -214,6 +235,7 @@ def main() -> None:
     console.print(build_params_table("Init Params", initparams))
     console.print(build_params_table("Priors", priors))
     console.print(build_stats_table(x, y))
+    SurfDisp.reset_run_counter()
     if not Confirm.ask("Launch the BayHunter inversion now?", default=True):
         console.print("Inversion canceled by user.")
         return
@@ -246,7 +268,19 @@ def main() -> None:
         dtsend=args.dtsend,
     )
 
-    # run_plots(savepath, station, initparams.get("maxmodels", 50000))
+    # Print final simulations
+    for c in optimizer.chains:
+        console.print(f"Simulation(s) done: {c.n_simulations}")
+        console.print(f"Misfits p1: {c.p1misfits}")
+        console.print(f"Misfits p2: {c.p2misfits}")
+    # end for
+
+    # Create plots
+    run_plots(
+        initparams=initparams,
+        optimizer=optimizer,
+        maxmodels=initparams.get("maxmodels")
+    )
 # end def main
 
 
