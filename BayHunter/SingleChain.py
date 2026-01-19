@@ -49,6 +49,8 @@ class SingleChain(object):
         self.station = self.initparams['station']
 
         self.n_simulations = 0
+        self.simulation_counts = list()
+        self.misfits = list()
 
         # set targets and inversion specific parameters
         self.targets = targets
@@ -85,7 +87,7 @@ class SingleChain(object):
         console.log(f"Chain {self.chainidx} initialized")
     # end def __init__
 
-# init model and misfit / likelihood
+    # init model and misfit / likelihood
 
     def _init_model_and_currentvalues(self):
         """
@@ -107,6 +109,7 @@ class SingleChain(object):
 
         vp, vs, h = Model.get_vp_vs_h(imodel, ivpvs, self.mantle)
         self.targets.evaluate(h=h, vp=vp, vs=vs, noise=inoise)
+        self.n_simulations += 1
 
         # self.currentmisfits = self.targets.proposalmisfits
         # self.currentlikelihood = self.targets.proposallikelihood
@@ -631,6 +634,12 @@ exponential law. Explicitly state a noise reference for your user target \
         # compute synthetic data and likelihood, misfit
         vp, vs, h = Model.get_vp_vs_h(proposalmodel, proposalvpvs, self.mantle)
         self.targets.evaluate(h=h, vp=vp, vs=vs, noise=proposalnoise)
+        self.n_simulations += 1
+
+        # Add to misfits and simulation counts
+        self.misfits.append(float(self.currentmisfits[-1]))
+        # self.simulation_counts.append(SurfDisp.RUN_COUNTER)
+        self.simulation_counts.append(self.n_simulations)
 
         paridx = PAR_MAP[modify]
         self.proposed[paridx] += 1
@@ -682,6 +691,7 @@ exponential law. Explicitly state a noise reference for your user target \
         Run the MCMC process for a single chain.
         """
         console.log(f"Run chain {self.chainidx}")
+
         # Time before inversion
         t0 = time.time()
         self.tnull = time.time()
@@ -756,7 +766,9 @@ exponential law. Explicitly state a noise reference for your user target \
         # print(f"p1misfits: {self.p1misfits[0]}")
         # print(f"p1noise: {self.p1noise[0]}")
 
-        self.n_simulations = SurfDisp.RUN_COUNTER
+        # self.n_simulations = SurfDisp.RUN_COUNTER
+        self.misfits = np.array(self.misfits)
+        self.simulation_counts = np.array(self.simulation_counts)
 
         self.save_finalmodels()
 

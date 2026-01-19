@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--savepath",
-        help="Override root folder for BayHunter outputs.",
+        help="Override root folder for outputs.",
     )
     parser.add_argument("--nchains", type=int, help="Number of MCMC chains.")
     parser.add_argument(
@@ -156,14 +156,17 @@ def run_plots_storage(
 
 def run_plots(
         initparams: dict,
-        optimizer: MCMC_Optimizer,
-        maxmodels: int
+        optimizer: MCMC_Optimizer
 ) -> None:
     """Generate BayHunter summary plots from the saved inversion output."""
+    # Save plot from data
     plotter = PlotFromChains(initparams=initparams, optimizer=optimizer)
-    plotter.save_final_distribution(maxmodels=maxmodels, dev=0.05)
     plotter.save_plots()
-    plotter.merge_pdfs()
+
+    # Save plot from storage
+    plotter = PlotFromStorage(configfile=str(Path(initparams["savepath"]) / "data" / f"{initparams['station']}_config.pkl"))
+    plotter.save_final_distribution(maxmodels=initparams["maxmodels"], dev=0.05)
+    plotter.save_plots()
 # end def run_plots
 
 
@@ -271,15 +274,16 @@ def main() -> None:
     # Print final simulations
     for c in optimizer.chains:
         console.print(f"Simulation(s) done: {c.n_simulations}")
-        console.print(f"Misfits p1: {c.p1misfits}")
-        console.print(f"Misfits p2: {c.p2misfits}")
+        # console.print(f"Misfits p1: {np.unique(c.p1misfits)[:20]}")
+        # console.print(f"Misfits p2: {np.unique(c.p2misfits)[:20]}")
+        print(f"Misfits: {c.misfits.shape[0]}")
+        print(f"Simulations: {c.simulation_counts.shape[0]}")
     # end for
 
     # Create plots
     run_plots(
         initparams=initparams,
         optimizer=optimizer,
-        maxmodels=initparams.get("maxmodels")
     )
 # end def main
 

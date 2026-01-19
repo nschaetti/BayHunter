@@ -80,38 +80,132 @@ class PlotFromChains(object):
         Plot previously generated chain outputs stored in the optimizer.
         """
         self.initparams = initparams
+        self.save_path = initparams['savepath']
+        self.n_chains = initparams['nchains']
         self.n_simulations = initparams['iter_burnin'] + initparams['iter_main']
         self.optimizer = optimizer
-        self.chains_misfits = None
+        self.chains_misfits = dict()
+        self.simulation_counts = dict()
+        self.plot_dir = Path(self.save_path) / 'plots'
+        self.data_dir = Path(self.save_path) / 'data'
         self._load_chain_data()
+        self._create_directories()
     # end def __init__
+
+    def _create_directories(self):
+        self.plot_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+    # end def _create_directories
 
     def _load_chain_data(self):
         """
         Load chain data from the optimizer.
         """
-        all_misfits = list()
-        for c in self.optimizer.chains:
-            chain_misfits = np.concat([c.p1misfits, c.p2misfits], axis=0)
-            print(chain_misfits.shape)
-            self.chains_misfits = all_misfits.append(chain_misfits.reshape(1, -1))
+        for c_n, c in enumerate(self.optimizer.chains):
+            self.chains_misfits[c_n] = c.misfits
+            self.simulation_counts[c_n] = c.simulation_counts
         # end for
-        # self.chains_misfits = np.array(all_misfits)
-        # print(self.chains_misfits.shape)
     # end def _load_chain_data
-
-    # end def _load_chain_data
-    def save_final_distribution(self, maxmodels, dev):
-        pass
-    # end def save_final_distribution
 
     def save_plots(self):
-        pass
+        # Misfits per simulations plot
+        self._plot_misfit_per_simulation()
+
+        # Misfits distribution per simulations plot
+        self._plot_misfit_distribution_per_simulation()
     # end def save_plots
 
-    def merge_pdfs(self):
-        pass
-    # end def merge_pdfs
+    def _plot_misfit_per_simulation(self):
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
+        for c_n in range(self.n_chains):
+            ax.plot(
+                self.simulation_counts[c_n],
+                self.chains_misfits[c_n],
+                label=f'Chain {c_n}'
+            )
+        # end for
+        ax.legend()
+        ax.set_ylim(bottom=0)
+        ax.set_xlabel('Simulation')
+        ax.set_ylabel('Misfit')
+        ax.set_title('Misfits per simulation / chains')
+        ax.grid(True)
+        fig.tight_layout()
+        fig.savefig(f'{self.plot_dir}/misfits_per_simulation.png')
+    # end def _plot_misfit_per_simulation
+
+    def _plot_misfit_distribution_per_simulation(self):
+        """
+        Plot the distribution of misfits per simulation.
+        """
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
+
+        data_x = list()
+        data_mean = list()
+        data_median = list()
+        data_q1 = list()
+        data_q3 = list()
+        data_95 = list()
+        data_05 = list()
+        data_min = list()
+        data_max = list()
+
+        best_per_chain = int(100 / self.n_chains)
+        for n_sim in range(100, self.n_simulations, 100):
+            total_sim = 0
+            step_best_misfits = list()
+            for c_n in range(self.n_chains):
+                c_misfits = self.chains_misfits[c_n][self.simulation_counts[c_n] <= n_sim]
+                step_best_misfits.append(c_misfits[-best_per_chain:].reshape(1, -1))
+                c_sims = self.simulation_counts[c_n][self.simulation_counts[c_n] <= n_sim]
+                total_sim += c_sims[-1]
+            # end for
+            step_misfits = np.concatenate(step_best_misfits, axis=0)
+            data_x.append(total_sim)
+            data_mean.append(np.mean(step_misfits))
+            data_median.append(np.median(step_misfits))
+            data_q1.append(np.quantile(step_misfits, 0.25))
+            data_q3.append(np.quantile(step_misfits, 0.75))
+            data_95.append(np.quantile(step_misfits, 0.95))
+            data_05.append(np.quantile(step_misfits, 0.05))
+            data_min.append(np.min(step_misfits))
+            data_max.append(np.max(step_misfits))
+        # end for
+
+        data_x = np.array(data_x)
+        data_mean = np.array(data_mean)
+        data_median = np.array(data_median)
+        data_q1 = np.array(data_q1)
+        data_q3 = np.array(data_q3)
+        data_95 = np.array(data_95)
+        data_05 = np.array(data_05)
+        data_min = np.array(data_min)
+        data_max = np.array(data_max)
+
+        ax.plot(data_x, data_mean, c='b', label="MCMC mean")
+        ax.plot(data_x, data_median, c='r', label="MCMC median")
+        ax.plot(data_x, data_q1, c='orange', label="MCMC Q1")
+        ax.plot(data_x, data_q3, c='orange', label="MCMC Q3")
+        ax.fill_between(data_x, data_q1, data_q3, alpha=0.2, color='blue')
+        ax.plot(data_x, data_min, c='blue', linestyle='--', label="MCMC 95%")
+        ax.plot(data_x, data_max, c='blue', linestyle='--', label="MCMC 5%")
+        ax.set_xlabel('Total simulations')
+        ax.set_ylabel('Misfit (RMS)')
+        ax.legend()
+
+        ax.set_title('Misfits distribution per simulation')
+
+        fig.tight_layout()
+
+        # Save fig
+        fig.savefig(f"{self.plot_dir}/misfits_distribution_per_simulation.png")
+
+        # Save data
+        np.save(
+            f"{self.data_dir}/misfits_distribution_per_simulation.npy",
+            np.array([data_x, data_mean, data_median, data_q1, data_q3, data_95, data_05, data_min, data_max])
+        )
+    # end def _plot_misfit_distribution_per_simulation
 
 # end class PlotFromChains
 
@@ -148,7 +242,7 @@ class PlotFromStorage(object):
         self.initparams = condict['initparams']
 
         self.datapath = op.dirname(configfile)
-        self.figpath = str(Path(self.datapath).parent)
+        self.figpath = str(Path(self.datapath).parent / "plots")
 
         self.init_filelists()
         self.init_outlierlist()
@@ -635,7 +729,7 @@ class PlotFromStorage(object):
         """
         files = self.likefiles[0][:nchains] + self.likefiles[1][:nchains]
 
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots(figsize=(15, 8))
         ax = self._plot_iitervalues(files, ax)
         ax.set_ylabel('Likelihood')
         return fig
@@ -656,7 +750,7 @@ class PlotFromStorage(object):
         """
         files = self.noisefiles[0][:nchains] + self.noisefiles[1][:nchains]
 
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots(figsize=(15, 8))
         ax = self._plot_iitervalues(files, ax, noise=True, ind=ind)
 
         parameter = np.concatenate(
@@ -678,7 +772,7 @@ class PlotFromStorage(object):
         """
         files = self.modfiles[0][:nchains] + self.modfiles[1][:nchains]
 
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots(figsize=(15, 8))
         ax = self._plot_iitervalues(files, ax, layer=True)
         ax.set_ylabel('Number of layers')
         return fig
@@ -697,7 +791,7 @@ class PlotFromStorage(object):
         """
         files = self.vpvsfiles[0][:nchains] + self.vpvsfiles[1][:nchains]
 
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots(figsize=(15, 8))
         ax = self._plot_iitervalues(files, ax)
         ax.set_ylabel('Vp / Vs')
         return fig
@@ -719,7 +813,7 @@ class PlotFromStorage(object):
         Returns:
             tuple: ``(fig, ax)`` with the rendered matplotlib objects.
         """
-        fig, ax = plt.subplots(figsize=(4.4, 7))
+        fig, ax = plt.subplots(figsize=(8, 15))
 
         models = ['mean', 'median', 'stdminmax']
         colors = ['green', 'blue', 'black']
@@ -786,7 +880,7 @@ class PlotFromStorage(object):
 
         # initiate plot
         fig, axes = plt.subplots(1, 2, gridspec_kw={'width_ratios': [4, 1]},
-                                 sharey=True, figsize=(5, 6.5))
+                                 sharey=True, figsize=(10, 13))
         fig.subplots_adjust(wspace=0.05)
 
         data2d, xedges, yedges = np.histogram2d(vss_flatten, deps_int.flatten(),
@@ -887,7 +981,7 @@ class PlotFromStorage(object):
             matplotlib.axes.Axes: Axis with the histogram.
         """
         if ax is None:
-            fig, ax = plt.subplots(figsize=(3.5, 3))
+            fig, ax = plt.subplots(figsize=(7, 6))
 
         # end if
         count, bins, _ = ax.hist(data, bins=bins, color='darkblue', alpha=0.7,
@@ -955,7 +1049,7 @@ class PlotFromStorage(object):
         bins = 20
         formatter = '%.2f'
 
-        fig, axes = plt.subplots(1, len(datasets), figsize=(3.5*len(datasets), 3))
+        fig, axes = plt.subplots(1, len(datasets), figsize=(7*len(datasets), 6))
         for i, data in enumerate(datasets):
             axes[i] = self._plot_posterior_distribution(data, bins, formatter, ax=axes[i])
             axes[i].set_xlabel('RMS misfit (%s)' % self.refs[i])
@@ -1030,7 +1124,7 @@ class PlotFromStorage(object):
                                for ref in self.refs[:-1]])
 
         pars = int(len(noise.T)/2)
-        fig, axes = plt.subplots(pars, 2, figsize=(7, 3*pars))
+        fig, axes = plt.subplots(pars, 2, figsize=(14, 6*pars))
         fig.subplots_adjust(hspace=0.2)
 
         for i, data in enumerate(noise.T):
@@ -1735,49 +1829,49 @@ class PlotFromStorage(object):
 
         # plot values changing over iteration
         fig1a = self.plot_iiterlikes(nchains=nchains)
-        self.savefig(fig1a, 'c_iiter_likes.pdf')
+        self.savefig(fig1a, 'c_iiter_likes.png')
 
         fig1b = self.plot_iitermisfits(nchains=nchains, ind=-1)
-        self.savefig(fig1b, 'c_iiter_misfits.pdf')
+        self.savefig(fig1b, 'c_iiter_misfits.png')
 
         fig1c = self.plot_iiternlayers(nchains=nchains)
-        self.savefig(fig1c, 'c_iiter_nlayers.pdf')
+        self.savefig(fig1c, 'c_iiter_nlayers.png')
 
         fig1d = self.plot_iitervpvs(nchains=nchains)
-        self.savefig(fig1d, 'c_iiter_vpvs.pdf')
+        self.savefig(fig1d, 'c_iiter_vpvs.png')
 
         for i in range(self.ntargets):
             ind = i * 2 + 1
             fig1d = self.plot_iiternoise(nchains=nchains, ind=ind)
-            self.savefig(fig1d, 'c_iiter_noisepar%d.pdf' % ind)
+            self.savefig(fig1d, 'c_iiter_noisepar%d.png' % ind)
 
         # plot current models and datafit
         # end for
         fig3a = self.plot_currentmodels(nchains=nchains)
         self.plot_refmodel(fig3a, 'model', color='k', lw=1)
-        self.savefig(fig3a, 'c_currentmodels.pdf')
+        self.savefig(fig3a, 'c_currentmodels.png')
 
         fig3b = self.plot_currentdatafits(nchains=nchains)
-        self.savefig(fig3b, 'c_currentdatafits.pdf')
+        self.savefig(fig3b, 'c_currentdatafits.png')
 
         # plot final posterior distributions
         fig2b = self.plot_posterior_nlayers()
         self.plot_refmodel(fig2b, 'nlays')
-        self.savefig(fig2b, 'c_posterior_nlayers.pdf')
+        self.savefig(fig2b, 'c_posterior_nlayers.png')
 
         fig2b = self.plot_posterior_vpvs()
         self.plot_refmodel(fig2b, 'vpvs')
-        self.savefig(fig2b, 'c_posterior_vpvs.pdf')
+        self.savefig(fig2b, 'c_posterior_vpvs.png')
 
         fig2c = self.plot_posterior_noise()
         self.plot_refmodel(fig2c, 'noise')
-        self.savefig(fig2c, 'c_posterior_noise.pdf')
+        self.savefig(fig2c, 'c_posterior_noise.png')
 
         fig2d = self.plot_posterior_models1d(depint=depint)
         self.plot_refmodel(fig2d, 'model', color='k', lw=1)
-        self.savefig(fig2d, 'c_posterior_models1d.pdf')
+        self.savefig(fig2d, 'c_posterior_models1d.png')
         fig2e = self.plot_posterior_models2d(depint=depint)
         self.plot_refmodel(fig2e, 'model', color='red', lw=0.5, alpha=0.7)
-        self.savefig(fig2e, 'c_posterior_models2d.pdf')
+        self.savefig(fig2e, 'c_posterior_models2d.png')
     # end def save_plots
 # end class PlotFromStorage
