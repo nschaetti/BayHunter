@@ -259,31 +259,23 @@ exponential law. Explicitly state a noise reference for your user target \
         nchains = self.nchains
 
         accepted_models = int(self.iterations * np.max(self.acceptance) / 100.)
-        self.nmodels = accepted_models  # 'iterations'
+        self.nmodels = int(accepted_models * 1.5)  # 'iterations'
 
         msize = self.nmodels * self.maxlayers * 2
         nsize = self.nmodels * ntargets * 2
         missize = self.nmodels * (ntargets + 1)
         dtype = np.float32
 
-        models = np.frombuffer(sharedmodels, dtype=dtype).\
-            reshape((nchains, msize))
-        misfits = np.frombuffer(sharedmisfits, dtype=dtype).\
-            reshape((nchains, missize))
-        likes = np.frombuffer(sharedlikes, dtype=dtype).\
-            reshape((nchains, self.nmodels))
-        noise = np.frombuffer(sharednoise, dtype=dtype).\
-            reshape((nchains, nsize))
-        vpvs = np.frombuffer(sharedvpvs, dtype=dtype).\
-            reshape((nchains, self.nmodels))
+        models = np.frombuffer(sharedmodels, dtype=dtype).reshape((nchains, msize))
+        misfits = np.frombuffer(sharedmisfits, dtype=dtype).reshape((nchains, missize))
+        likes = np.frombuffer(sharedlikes, dtype=dtype).reshape((nchains, self.nmodels))
+        noise = np.frombuffer(sharednoise, dtype=dtype).reshape((nchains, nsize))
+        vpvs = np.frombuffer(sharedvpvs, dtype=dtype).reshape((nchains, self.nmodels))
 
-        self.chainmodels = models[chainidx].reshape(
-            self.nmodels, self.maxlayers*2)
-        self.chainmisfits = misfits[chainidx].reshape(
-            self.nmodels, ntargets+1)
+        self.chainmodels = models[chainidx].reshape(self.nmodels, self.maxlayers*2)
+        self.chainmisfits = misfits[chainidx].reshape(self.nmodels, ntargets+1)
         self.chainlikes = likes[chainidx]
-        self.chainnoise = noise[chainidx].reshape(
-            self.nmodels, ntargets*2)
+        self.chainnoise = noise[chainidx].reshape(self.nmodels, ntargets*2)
         self.chainvpvs = vpvs[chainidx]
         self.chainiter = np.ones(self.chainlikes.size) * np.nan
     # end def _init_chainarrays
@@ -579,7 +571,14 @@ exponential law. Explicitly state a noise reference for your user target \
 
     def append_currentmodel(self):
         """Append currentmodel to chainmodels and values."""
-        self.chainmodels[self.n, :self.currentmodel.size] = self.currentmodel
+        try:
+            self.chainmodels[self.n, :self.currentmodel.size] = self.currentmodel
+        except IndexError as  e:
+            print(f"e: {e}")
+            print(self.chainmodels.shape)
+            print(self.n)
+            raise
+        # end try
         self.chainmisfits[self.n, :] = self.currentmisfits
         self.chainlikes[self.n] = self.currentlikelihood
         self.chainnoise[self.n, :] = self.currentnoise

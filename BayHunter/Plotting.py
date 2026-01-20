@@ -117,21 +117,34 @@ class PlotFromChains(object):
 
     def _plot_misfit_per_simulation(self):
         fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
+        plot_data = []
         for c_n in range(self.n_chains):
+            counts = self.simulation_counts[c_n]
+            misfits = self.chains_misfits[c_n]
             ax.plot(
-                self.simulation_counts[c_n],
-                self.chains_misfits[c_n],
+                counts,
+                misfits,
                 label=f'Chain {c_n}'
             )
+            plot_data.append({
+                'chain': c_n,
+                'simulation_counts': counts,
+                'misfits': misfits
+            })
         # end for
         ax.legend()
         ax.set_ylim(bottom=0)
         ax.set_xlabel('Simulation')
         ax.set_ylabel('Misfit')
         ax.set_title('Misfits per simulation / chains')
-        ax.grid(True)
+        plt.grid(which='major', linestyle = '--', linewidth = 0.5)
+        plt.grid(which='minor', linestyle=':', linewidth=0.5)
         fig.tight_layout()
         fig.savefig(f'{self.plot_dir}/misfits_per_simulation.png')
+        np.save(
+            f'{self.data_dir}/misfits_per_simulation.npy',
+            np.array(plot_data, dtype=object)
+        )
     # end def _plot_misfit_per_simulation
 
     def _plot_misfit_distribution_per_simulation(self):
@@ -150,8 +163,9 @@ class PlotFromChains(object):
         data_min = list()
         data_max = list()
 
-        best_per_chain = int(100 / self.n_chains)
-        for n_sim in range(100, self.n_simulations, 100):
+        step = 10
+        best_per_chain = int(step / self.n_chains)
+        for n_sim in range(step, self.n_simulations, step):
             total_sim = 0
             step_best_misfits = list()
             for c_n in range(self.n_chains):
@@ -196,6 +210,9 @@ class PlotFromChains(object):
         ax.set_title('Misfits distribution per simulation')
 
         fig.tight_layout()
+
+        plt.grid(which='major', linestyle='--', linewidth=0.5)
+        plt.grid(which='minor', linestyle=':', linewidth=0.5)
 
         # Save fig
         fig.savefig(f"{self.plot_dir}/misfits_distribution_per_simulation.png")
@@ -612,7 +629,7 @@ class PlotFromStorage(object):
         # end if
         return fig
 
-# Plot values per iteration.
+    # Plot values per iteration.
 
     # end def plot_refmodel
     def _plot_iitervalues(self, files, ax, layer=0, misfit=0, noise=0, ind=-1):
@@ -677,7 +694,8 @@ class PlotFromStorage(object):
             # end if
         # end for
         ax.set_xlim(xmin, xmax)
-        ax.set_ylim(datamin*0.95, datamax*1.05)
+        # ax.set_ylim(datamin*0.95, datamax*1.05)
+        ax.set_ylim(bottom=0)
         ax.axvline(0, color='k', ls=':', alpha=0.7)
 
         (abs(xmin) + xmax)
@@ -708,9 +726,10 @@ class PlotFromStorage(object):
             matplotlib.figure.Figure: Misfit figure or ``None`` if plotting
             fails.
         """
+        print(f"plotting {nchains} chains with misfit")
         files = self.misfiles[0][:nchains] + self.misfiles[1][:nchains]
 
-        fig, ax = plt.subplots(figsize=(7, 4))
+        fig, ax = plt.subplots(figsize=(14, 8))
         ax = self._plot_iitervalues(files, ax, misfit=True, ind=ind)
         ax.set_ylabel('%s misfit' % self.refs[ind])
         return fig
@@ -1828,22 +1847,22 @@ class PlotFromStorage(object):
         nchains = np.min([nchains, len(self.likefiles[1])])
 
         # plot values changing over iteration
-        fig1a = self.plot_iiterlikes(nchains=nchains)
-        self.savefig(fig1a, 'c_iiter_likes.png')
+        # fig1a = self.plot_iiterlikes(nchains=nchains)
+        # self.savefig(fig1a, 'c_iiter_likes.png')
 
         fig1b = self.plot_iitermisfits(nchains=nchains, ind=-1)
         self.savefig(fig1b, 'c_iiter_misfits.png')
 
-        fig1c = self.plot_iiternlayers(nchains=nchains)
-        self.savefig(fig1c, 'c_iiter_nlayers.png')
-
-        fig1d = self.plot_iitervpvs(nchains=nchains)
-        self.savefig(fig1d, 'c_iiter_vpvs.png')
-
-        for i in range(self.ntargets):
-            ind = i * 2 + 1
-            fig1d = self.plot_iiternoise(nchains=nchains, ind=ind)
-            self.savefig(fig1d, 'c_iiter_noisepar%d.png' % ind)
+        # fig1c = self.plot_iiternlayers(nchains=nchains)
+        # self.savefig(fig1c, 'c_iiter_nlayers.png')
+        #
+        # fig1d = self.plot_iitervpvs(nchains=nchains)
+        # self.savefig(fig1d, 'c_iiter_vpvs.png')
+        #
+        # for i in range(self.ntargets):
+        #     ind = i * 2 + 1
+        #     fig1d = self.plot_iiternoise(nchains=nchains, ind=ind)
+        #     self.savefig(fig1d, 'c_iiter_noisepar%d.png' % ind)
 
         # plot current models and datafit
         # end for
@@ -1851,27 +1870,27 @@ class PlotFromStorage(object):
         self.plot_refmodel(fig3a, 'model', color='k', lw=1)
         self.savefig(fig3a, 'c_currentmodels.png')
 
-        fig3b = self.plot_currentdatafits(nchains=nchains)
-        self.savefig(fig3b, 'c_currentdatafits.png')
-
-        # plot final posterior distributions
-        fig2b = self.plot_posterior_nlayers()
-        self.plot_refmodel(fig2b, 'nlays')
-        self.savefig(fig2b, 'c_posterior_nlayers.png')
-
-        fig2b = self.plot_posterior_vpvs()
-        self.plot_refmodel(fig2b, 'vpvs')
-        self.savefig(fig2b, 'c_posterior_vpvs.png')
-
-        fig2c = self.plot_posterior_noise()
-        self.plot_refmodel(fig2c, 'noise')
-        self.savefig(fig2c, 'c_posterior_noise.png')
-
-        fig2d = self.plot_posterior_models1d(depint=depint)
-        self.plot_refmodel(fig2d, 'model', color='k', lw=1)
-        self.savefig(fig2d, 'c_posterior_models1d.png')
-        fig2e = self.plot_posterior_models2d(depint=depint)
-        self.plot_refmodel(fig2e, 'model', color='red', lw=0.5, alpha=0.7)
-        self.savefig(fig2e, 'c_posterior_models2d.png')
+        # fig3b = self.plot_currentdatafits(nchains=nchains)
+        # self.savefig(fig3b, 'c_currentdatafits.png')
+        #
+        # # plot final posterior distributions
+        # fig2b = self.plot_posterior_nlayers()
+        # self.plot_refmodel(fig2b, 'nlays')
+        # self.savefig(fig2b, 'c_posterior_nlayers.png')
+        #
+        # fig2b = self.plot_posterior_vpvs()
+        # self.plot_refmodel(fig2b, 'vpvs')
+        # self.savefig(fig2b, 'c_posterior_vpvs.png')
+        #
+        # fig2c = self.plot_posterior_noise()
+        # self.plot_refmodel(fig2c, 'noise')
+        # self.savefig(fig2c, 'c_posterior_noise.png')
+        #
+        # fig2d = self.plot_posterior_models1d(depint=depint)
+        # self.plot_refmodel(fig2d, 'model', color='k', lw=1)
+        # self.savefig(fig2d, 'c_posterior_models1d.png')
+        # fig2e = self.plot_posterior_models2d(depint=depint)
+        # self.plot_refmodel(fig2e, 'model', color='red', lw=0.5, alpha=0.7)
+        # self.savefig(fig2e, 'c_posterior_models2d.png')
     # end def save_plots
 # end class PlotFromStorage

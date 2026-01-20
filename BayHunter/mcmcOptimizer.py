@@ -102,11 +102,10 @@ class MCMC_Optimizer(object):
 
         acceptance = np.max(self.initparams['acceptance']) / 100.
         accepted_models = int(self.iterations * acceptance)
-        self.nmodels = accepted_models  # 'iterations'
+        self.nmodels = int(accepted_models * 1.5)  # 'iterations'
 
         # models
-        self.sharedmodels = sharedctypes.RawArray(
-            'f', self.nchains * (self.nmodels * self.maxlayers * 2))
+        self.sharedmodels = sharedctypes.RawArray('f', self.nchains * (self.nmodels * self.maxlayers * 2))
         modeldata = np.frombuffer(self.sharedmodels, dtype=dtype)
         modeldata.fill(np.nan)
         memory += modeldata.nbytes
