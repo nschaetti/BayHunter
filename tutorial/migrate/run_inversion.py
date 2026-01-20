@@ -239,9 +239,9 @@ def main() -> None:
     console.print(build_params_table("Priors", priors))
     console.print(build_stats_table(x, y))
     SurfDisp.reset_run_counter()
-    if not Confirm.ask("Launch the BayHunter inversion now?", default=True):
-        console.print("Inversion canceled by user.")
-        return
+    # if not Confirm.ask("Launch the BayHunter inversion now?", default=True):
+    #     console.print("Inversion canceled by user.")
+    #     return
     # end if
 
     # Build BayHunter targets from the dispersion curve.
