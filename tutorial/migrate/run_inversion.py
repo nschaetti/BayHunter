@@ -170,6 +170,25 @@ def run_plots(
 # end def run_plots
 
 
+def save_data(
+        initparams: dict,
+        optimizer: MCMC_Optimizer
+) -> None:
+    data_dir = Path(initparams["savepath"]) / "data"
+    chains_data = {}
+    print(f"Saving data to {data_dir}")
+    for c in optimizer.chains:
+        # chains_data[c.chain_id] = c.misfits
+        # print(f"chain {c.chainidx}: {c.misfits.shape}, {c.simulation_counts.shape}")
+        chains_data[str(c.chainidx)] = np.concatenate(
+            [c.misfits.reshape(1, -1), c.simulation_counts.reshape(1, -1)],
+            axis=0
+        )
+    # end for
+    np.savez(data_dir / f"{initparams['station']}_simulation_data.npz", **chains_data)
+# end def save_data
+
+
 def build_stats_table(x: np.ndarray, y: np.ndarray) -> Table:
     """Create a rich table summarizing dispersion curve statistics."""
     table = Table(title="Dispersion Curve Summary")
@@ -282,6 +301,12 @@ def main() -> None:
 
     # Create plots
     run_plots(
+        initparams=initparams,
+        optimizer=optimizer,
+    )
+
+    # Save data
+    save_data(
         initparams=initparams,
         optimizer=optimizer,
     )
